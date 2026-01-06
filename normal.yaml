@@ -1,0 +1,6 @@
+class_path: anomalib.data.Folder
+init_args:
+  name: "jerryscan_singleangle"
+  root: "..\\JerryscanAI_dataset_singleangle\\everything"
+  normal_dir: "good"
+  test_split_mode: "synthetic"

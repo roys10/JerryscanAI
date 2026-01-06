@@ -1,0 +1,22 @@
+# data
+data/
+datasets/
+*.zip
+
+# anomalib / training outputs
+results/
+runs/
+lightning_logs/
+outputs/
+wandb/
+
+# checkpoints / artifacts
+*.ckpt
+*.pth
+*.onnx
+*.pt
+
+# python
+__pycache__/
+.venv/
+.env
