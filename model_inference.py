@@ -4,8 +4,8 @@ import torch
 import numpy as np
 from anomalib.models import Padim
 
-ckpt_path = r"results\Padim\jerryscan_singleangle\latest\weights\lightning\model.ckpt"
-image_path = r"cli_prediction\G01-251224-094208-433.bmp"#"..\JerryscanAI_dataset_singleangle\test\good\G01-251224-163802-928.bmp"
+ckpt_path = r"model.ckpt"
+image_path = r"cli_predictions\synthetic_fault_G01-251224-094208-433.bmp"#"..\JerryscanAI_dataset_singleangle\test\good\G01-251224-163802-928.bmp"
 out_dir = r"predictions\example1"
 os.makedirs(out_dir, exist_ok=True)
 
@@ -30,6 +30,12 @@ x = torch.from_numpy(norm).permute(2, 0, 1).unsqueeze(0).float()
 # ---- load model ----
 model = Padim.load_from_checkpoint(ckpt_path).float().eval()
 
+print("DEBUG: Model Attributes:", dir(model))
+if hasattr(model, 'image_threshold'):
+    print(f"DEBUG: Image Threshold: {model.image_threshold.value.item()}")
+if hasattr(model, 'pixel_threshold'):
+    print(f"DEBUG: Pixel Threshold: {model.pixel_threshold.value.item()}")
+
 # ---- inference ----
 with torch.no_grad():
     output = model(x)
@@ -41,15 +47,46 @@ print("Prediction:", "BAD (anomalous)" if pred_label else "GOOD (normal)")
 print("Score:", pred_score)
 
 # ---- get maps ----
-anomaly_map = output.anomaly_map[0, 0].detach().cpu().numpy()          # [256, 256]
-pred_mask = output.pred_mask[0, 0].detach().cpu().numpy().astype(np.uint8)  # [256, 256] 0/1
+raw_map = output.anomaly_map[0, 0].detach().cpu().numpy()          # [256, 256]
+
+# --- Global Normalization ---
+min_val, max_val = None, None
+if hasattr(model, 'normalization_metrics') and hasattr(model.normalization_metrics, 'min'):
+     min_val = model.normalization_metrics.min.cpu().numpy()
+     max_val = model.normalization_metrics.max.cpu().numpy()
+elif hasattr(model, 'min_max'):
+     min_val = model.min_max.min.cpu().numpy()
+     max_val = model.min_max.max.cpu().numpy()
+
+if min_val is not None and max_val is not None:
+    print(f"Global Normalization: Min={min_val}, Max={max_val}")
+    anomaly_map = (raw_map - min_val) / (max_val - min_val + 1e-6)
+    anomaly_map = np.clip(anomaly_map, 0, 1)
+else:
+    print("WARNING: No global stats. Using local normalization (Red = max in THIS image).")
+    anomaly_map = (raw_map - raw_map.min()) / (raw_map.max() - raw_map.min() + 1e-6)
+
+# --- Gaussian Blur (Standard Anomalib Step) ---
+# Anomalib applies blur (sigma=4) to Padim maps to smooth noise before thresholding
+anomaly_map = cv2.GaussianBlur(anomaly_map, (0, 0), sigmaX=4, sigmaY=4)
+
+# Explicitly use the trained pixel_threshold if available
+if hasattr(model, 'pixel_threshold'):
+    threshold = model.pixel_threshold.value.item()
+    print(f"Using Pixel Threshold: {threshold}")
+    pred_mask = (anomaly_map > threshold).astype(np.uint8)
+else:
+    # This fallback is tricky if map is normalized differently... but generally 0.5 is safe for normalized
+    pred_mask = (anomaly_map > 0.5).astype(np.uint8) 
+
 
 # upscale to original size for visualization
 anomaly_map_up = cv2.resize(anomaly_map, (w, h), interpolation=cv2.INTER_LINEAR)
 pred_mask_up = cv2.resize(pred_mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
 # ---- panel 2: heatmap overlay ----
-heat = cv2.normalize(anomaly_map_up, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+# Use global normalization (0-1) scaled to 0-255. 0=Blue, 255=Red.
+heat = (anomaly_map_up * 255).astype(np.uint8)
 heat = cv2.applyColorMap(heat, cv2.COLORMAP_JET)  # BGR
 overlay_heat = cv2.addWeighted(orig_bgr, 0.6, heat, 0.4, 0)
 

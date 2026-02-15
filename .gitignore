@@ -1,22 +1,65 @@
-# data
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Node.js / Frontend ---
+frontend/node_modules/
+frontend/npm-debug.log
+frontend/yarn-error.log
+frontend/dist/
+frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# --- ML / Data ---
 data/
 datasets/
-*.zip
-
-# anomalib / training outputs
 results/
 runs/
 lightning_logs/
 outputs/
 wandb/
-
-# checkpoints / artifacts
 *.ckpt
 *.pth
-*.onnx
 *.pt
+*.onnx
+*.weights
+*.h5
 
-# python
-__pycache__/
-.venv/
-.env
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
