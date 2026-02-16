@@ -36,6 +36,7 @@ async def load_models():
 
 @app.post("/inspect")
 async def inspect_image(file: UploadFile = File(...), angle_id: str = None):
+    print("here")
     try:
         contents = await file.read()
         

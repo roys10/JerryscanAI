@@ -4,79 +4,129 @@ import numpy as np
 import cv2
 import base64
 from anomalib.models import Padim
+from torchvision.transforms import v2
+from PIL import Image
+import io
+
+class DictDot(dict):
+    """Dict that supports dot access (required for Anomalib models)."""
+    def __getattr__(self, item):
+        try:
+            return self[item]
+        except KeyError:
+            raise AttributeError(item)
 
 class JerryScanPadimModel:
     def __init__(self, ckpt_path: str):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Loading Padim model from {ckpt_path}...")
         
-        # Load model with correct precision
-        self.model = Padim.load_from_checkpoint(ckpt_path).float().to(self.device).eval()
+        # Load model
+        self.model = Padim.load_from_checkpoint(ckpt_path).to(self.device).eval()
         
-        # Preprocessing constants
-        self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        self.std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-        self.image_size = (256, 256)
+        # Preprocessing (Exact Match to CLI/PredictDataset)
+        # Resize to 256x256 and Normalize (ImageNet stats)
+        self.transform = v2.Compose([
+            v2.Resize((256, 256), interpolation=v2.InterpolationMode.BICUBIC),
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
 
     def predict(self, image_bytes: bytes) -> dict:
-        # 1. Preprocess
+        # 1. Decode Image
         nparr = np.frombuffer(image_bytes, np.uint8)
         original = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if original is None: raise ValueError("Could not decode image")
         
-        h, w = original.shape[:2]
+        # Convert to tensor for transform
+        # v2 transforms expect [C, H, W] or [H, W, C] depending... 
+        # Safest is to convert to PIL or torch Tensor [3, H, W]
         img_rgb = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(img_rgb, self.image_size, interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
-        norm = (resized - self.mean) / self.std
-        tensor = torch.from_numpy(norm).permute(2, 0, 1).unsqueeze(0).float().to(self.device)
-
-        # 2. Inference
-        with torch.no_grad():
-            output = self.model(tensor)
-
-        # 3. Extract & Normalize Anomaly Map
-        raw_map = output.anomaly_map[0, 0].detach().cpu().numpy()
-        pred_score = float(output.pred_score.reshape(-1)[0].item())
-        pred_label = bool(output.pred_label.reshape(-1)[0].item())
-
-        # Resize to original
-        anomaly_map = cv2.resize(raw_map, (w, h), interpolation=cv2.INTER_LINEAR)
-
-        # Normalize using model stats (Critical for Padim)
-        if hasattr(self.model, 'normalization_metrics') or hasattr(self.model, 'min_max'):
-            metrics = getattr(self.model, 'normalization_metrics', self.model.min_max)
-            min_val = metrics.min.cpu().numpy()
-            max_val = metrics.max.cpu().numpy()
-            anomaly_map = (anomaly_map - min_val) / (max_val - min_val + 1e-6)
+        # Convert to tensor [3, H, W] scaled 0-255 (uint8)
+        tensor = torch.from_numpy(img_rgb).permute(2, 0, 1) 
         
-        anomaly_map = np.clip(anomaly_map, 0, 1)
+        # Apply Transform
+        # v2.Resize expects tensor [C, H, W]
+        input_tensor = self.transform(tensor).unsqueeze(0).to(self.device) # [1, 3, 256, 256]
 
-        # --- Gaussian Blur (Standard Anomalib Step) ---
-        # Anomalib applies blur (sigma=4) to Padim maps to smooth noise before thresholding
-        anomaly_map = cv2.GaussianBlur(anomaly_map, (0, 0), sigmaX=4, sigmaY=4)
+        # 2. Prepare Batch (for predict_step)
+        batch = DictDot({"image": input_tensor})
+        
+        # 3. Inference
+        with torch.no_grad():
+            outputs = self.model.predict_step(batch, 0)
 
-        # 4. Thresholding (Mask Generation)
+        # 4. Extract Results
+        # predict_step updates batch in-place
+        if isinstance(batch, dict) or isinstance(batch, DictDot):
+            anomaly_map = batch.anomaly_map
+            pred_score = batch.pred_score
+        else:
+             # Fallback
+            anomaly_map = batch.anomaly_map
+            pred_score = batch.pred_score
+
+        if isinstance(anomaly_map, torch.Tensor):
+            anomaly_map = anomaly_map.cpu().numpy()
+        if isinstance(pred_score, torch.Tensor):
+            pred_score = pred_score.item()
+
+        # Squeeze [1, 1, 256, 256] -> [256, 256]
+        if anomaly_map.ndim == 4: anomaly_map = anomaly_map[0, 0]
+        elif anomaly_map.ndim == 3: anomaly_map = anomaly_map[0]
+
+        # 5. Post-Processing (Global Norm -> Blur -> Threshold)
+        
+        # Global Normalization
+        min_val, max_val = None, None
+        if hasattr(self.model, 'normalization_metrics') and hasattr(self.model.normalization_metrics, 'min'):
+             min_val = self.model.normalization_metrics.min.cpu().numpy()
+             max_val = self.model.normalization_metrics.max.cpu().numpy()
+        elif hasattr(self.model, 'min_max'):
+             min_val = self.model.min_max.min.cpu().numpy()
+             max_val = self.model.min_max.max.cpu().numpy()
+
+        if min_val is not None and max_val is not None:
+            # print(f"Global Norm: {min_val} - {max_val}")
+            anomaly_map_norm = (anomaly_map - min_val) / (max_val - min_val + 1e-6)
+            anomaly_map_norm = np.clip(anomaly_map_norm, 0, 1)
+        else:
+            # Fallback
+            sys_min, sys_max = anomaly_map.min(), anomaly_map.max()
+            anomaly_map_norm = (anomaly_map - sys_min) / (sys_max - sys_min + 1e-6)
+
+        # Gaussian Blur (Standard Anomalib Step)
+        anomaly_map_norm = cv2.GaussianBlur(anomaly_map_norm, (0, 0), sigmaX=4, sigmaY=4)
+        
+        # Thresholding
         threshold = 0.5
         if hasattr(self.model, 'pixel_threshold'):
             threshold = self.model.pixel_threshold.value.item()
         elif hasattr(self.model, 'image_threshold'):
             threshold = self.model.image_threshold.value.item()
             
-        mask = (anomaly_map > threshold).astype(np.uint8)
+        pred_mask = (anomaly_map_norm > threshold).astype(np.uint8)
 
-        # 5. Visualization
-        # Heatmap Overlay
-        heatmap_u8 = (anomaly_map * 255).astype(np.uint8)
+        # 6. Visualization
+        h, w = original.shape[:2]
+        
+        # Resize map/mask to original
+        anomaly_map_up = cv2.resize(anomaly_map_norm, (w, h), interpolation=cv2.INTER_LINEAR)
+        pred_mask_up = cv2.resize(pred_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+        
+        # Heatmap
+        heatmap_u8 = (anomaly_map_up * 255).astype(np.uint8)
         colormap = cv2.applyColorMap(heatmap_u8, cv2.COLORMAP_JET)
         heatmap_overlay = cv2.addWeighted(original, 0.6, colormap, 0.4, 0)
 
-        # Segmentation Overlay (Red Contour)
+        # Segmentation (Red Contour)
         seg_overlay = original.copy()
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(seg_overlay, contours, -1, (0, 0, 255), 2)
+        mask255 = (pred_mask_up * 255).astype(np.uint8)
+        contours, _ = cv2.findContours(mask255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(seg_overlay, contours, -1, (0, 0, 255), 3)
 
         return {
-            "status": "FAIL" if pred_label else "PASS",
+            "status": "FAIL" if pred_score > threshold else "PASS", 
             "score": pred_score,
             "heatmap_image": self._encode(heatmap_overlay),
             "segmentation_image": self._encode(seg_overlay),
