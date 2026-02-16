@@ -241,7 +241,7 @@ function App() {
               {result ? (
                 <>
                   <div className={`status-badge ${result.status === 'PASS' ? 'status-pass' : 'status-fail'}`}>
-                    {result.status} (Score: {result.score.toFixed(2)})
+                    {result.status} (Score: {result.score_percentage?.toFixed(2)}%)
                   </div>
                   <img
                     src={viewMode === 'heatmap' ? result.heatmap_image : result.segmentation_image}

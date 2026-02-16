@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 
 # --- Configuration ---
 ckpt_path = "model.ckpt"
-image_path = "cli_predictions/synthetic_fault_G01-251224-094208-433.bmp"
+image_path = "cli_predictions/G01-251224-094208-433.bmp"
 
 # --- Helper Classes ---
 class DictDot(dict):
@@ -82,7 +82,6 @@ def main():
     print("Post-processing...")
     
     # 1. Extract Anomaly Map
-    # 1. Extract Anomaly Map
     # predict_step updates batch in-place and returns None (or dict.update result)
     if isinstance(batch, dict) or isinstance(batch, DictDot):
         anomaly_map = batch.anomaly_map
@@ -102,20 +101,25 @@ def main():
     elif anomaly_map.ndim == 3: anomaly_map = anomaly_map[0]
 
     # 2. Global Normalization (Crucial for correct colors)
-    min_val, max_val = None, None
-    if hasattr(model, 'normalization_metrics') and hasattr(model.normalization_metrics, 'min'):
-         min_val = model.normalization_metrics.min.cpu().numpy()
-         max_val = model.normalization_metrics.max.cpu().numpy()
-    elif hasattr(model, 'min_max'):
-         min_val = model.min_max.min.cpu().numpy()
-         max_val = model.min_max.max.cpu().numpy()
+    # Try to get stats from various locations
+    if hasattr(model, 'pixel_min') and hasattr(model, 'pixel_max'):
+        min_val = model.pixel_min.cpu().numpy()
+        max_val = model.pixel_max.cpu().numpy()
+    elif hasattr(model, 'image_min') and hasattr(model, 'image_max'):
+        min_val = model.image_min.cpu().numpy()
+        max_val = model.image_max.cpu().numpy()
+    elif hasattr(model, 'post_processor') and hasattr(model.post_processor, 'pixel_min'):
+         min_val = model.post_processor.pixel_min.cpu().numpy()
+         max_val = model.post_processor.pixel_max.cpu().numpy()
 
     if min_val is not None and max_val is not None:
-        print(f"Global Normalization: Min={min_val:.4f}, Max={max_val:.4f}")
+        print(f"Global Normalization stats: Min={min_val:.4f}, Max={max_val:.4f}")
+        # Standard normalization
         anomaly_map_norm = (anomaly_map - min_val) / (max_val - min_val + 1e-6)
         anomaly_map_norm = np.clip(anomaly_map_norm, 0, 1)
     else:
         print("WARNING: No global stats found. Fallback to local normalization.")
+        # Fallback local norm
         anomaly_map_norm = (anomaly_map - anomaly_map.min()) / (anomaly_map.max() - anomaly_map.min() + 1e-6)
 
     # 3. Gaussian Blur (Smoother contours)
@@ -126,16 +130,27 @@ def main():
     threshold = 0.5
     if hasattr(model, 'pixel_threshold'):
         threshold = model.pixel_threshold.value.item()
-        print(f"Using Pixel Threshold: {threshold:.4f}")
+        print(f"Using Trained Threshold: {threshold:.4f}")
     elif hasattr(model, 'image_threshold'):
         threshold = model.image_threshold.value.item()
-        print(f"Using Image Threshold: {threshold:.4f}")
+        print(f"Using Trained Threshold: {threshold:.4f}")
 
     pred_mask = (anomaly_map_norm > threshold).astype(np.uint8)
 
+    # --- Convert Score to Percentage (0-100%) ---
+    # Normalize the raw score using the same global stats
+    if min_val is not None and max_val is not None:
+        norm_score = (pred_score - min_val) / (max_val - min_val + 1e-6)
+    else:
+        # Fallback if no stats 
+        norm_score = min(pred_score, 1.0)
+    
+    score_percentage = np.clip(norm_score, 0, 1) * 100
+
     print("-" * 30)
-    print(f"Prediction: {'BAD' if pred_score > threshold else 'GOOD'}")
-    print(f"Score: {pred_score:.4f}")
+    print(f"Prediction: {'BAD' if norm_score > threshold else 'GOOD'}")
+    print(f"Anomaly Score: {score_percentage:.2f}% (Raw: {pred_score:.4f})")
+    print(f"Threshold Limit: {threshold * 100:.2f}%")
     print("-" * 30)
 
     # --- Visualization ---

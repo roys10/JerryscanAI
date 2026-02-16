@@ -78,13 +78,17 @@ class JerryScanPadimModel:
         # 5. Post-Processing (Global Norm -> Blur -> Threshold)
         
         # Global Normalization
+        # Try to get stats from various locations (Robust)
         min_val, max_val = None, None
-        if hasattr(self.model, 'normalization_metrics') and hasattr(self.model.normalization_metrics, 'min'):
-             min_val = self.model.normalization_metrics.min.cpu().numpy()
-             max_val = self.model.normalization_metrics.max.cpu().numpy()
-        elif hasattr(self.model, 'min_max'):
-             min_val = self.model.min_max.min.cpu().numpy()
-             max_val = self.model.min_max.max.cpu().numpy()
+        if hasattr(self.model, 'pixel_min') and hasattr(self.model, 'pixel_max'):
+            min_val = self.model.pixel_min.cpu().numpy()
+            max_val = self.model.pixel_max.cpu().numpy()
+        elif hasattr(self.model, 'image_min') and hasattr(self.model, 'image_max'):
+            min_val = self.model.image_min.cpu().numpy()
+            max_val = self.model.image_max.cpu().numpy()
+        elif hasattr(self.model, 'post_processor') and hasattr(self.model.post_processor, 'pixel_min'):
+             min_val = self.model.post_processor.pixel_min.cpu().numpy()
+             max_val = self.model.post_processor.pixel_max.cpu().numpy()
 
         if min_val is not None and max_val is not None:
             # print(f"Global Norm: {min_val} - {max_val}")
@@ -107,6 +111,15 @@ class JerryScanPadimModel:
             
         pred_mask = (anomaly_map_norm > threshold).astype(np.uint8)
 
+        # --- Score Percentage Calculation (0-100%) ---
+        if min_val is not None and max_val is not None:
+             norm_score = (pred_score - min_val) / (max_val - min_val + 1e-6)
+        else:
+             norm_score = min(pred_score, 1.0)
+        
+        score_percentage = float(np.clip(norm_score, 0, 1) * 100)
+        threshold_percentage = float(threshold * 100)
+
         # 6. Visualization
         h, w = original.shape[:2]
         
@@ -126,8 +139,10 @@ class JerryScanPadimModel:
         cv2.drawContours(seg_overlay, contours, -1, (0, 0, 255), 3)
 
         return {
-            "status": "FAIL" if pred_score > threshold else "PASS", 
+            "status": "FAIL" if norm_score > threshold else "PASS", 
             "score": pred_score,
+            "score_percentage": score_percentage,
+            "threshold_percentage": threshold_percentage,
             "heatmap_image": self._encode(heatmap_overlay),
             "segmentation_image": self._encode(seg_overlay),
             "original_image": self._encode(original)
