@@ -67,19 +67,23 @@ def main():
         print(f"Error creating dataloader: {e}")
         return
 
-    # --- Inference ---
+    # --- Inference (Standard PredictDataset) ---
     print("Running inference...")
     try:
+        # Use explicit transform
+        dataset = PredictDataset(path=image_path, transform=transform)
+        dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
         batch = next(iter(dataloader))
-        # Move to model device if necessary (default CPU for this script)
-        outputs = model.predict_step(batch, 0)
-        # outputs is the updated batch object
+        model.predict_step(batch, 0)
     except Exception as e:
         print(f"Error during inference: {e}")
         return
 
-    # --- Post-Processing (CLI Parity) ---
-    print("Post-processing...")
+    # Process Results
+    process_batch_results(model, batch)
+
+def process_batch_results(model, batch):
+    print(f"\n--- Processing Results ---")
     
     # 1. Extract Anomaly Map
     # predict_step updates batch in-place and returns None (or dict.update result)
@@ -102,6 +106,7 @@ def main():
 
     # 2. Global Normalization (Crucial for correct colors)
     # Try to get stats from various locations
+    min_val, max_val = None, None # Initialize min_val, max_val
     if hasattr(model, 'pixel_min') and hasattr(model, 'pixel_max'):
         min_val = model.pixel_min.cpu().numpy()
         max_val = model.pixel_max.cpu().numpy()

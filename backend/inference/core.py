@@ -33,21 +33,31 @@ class JerryScanPadimModel:
         ])
 
     def predict(self, image_bytes: bytes) -> dict:
-        # 1. Decode Image
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        original = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if original is None: raise ValueError("Could not decode image")
+        # 1. Decode Image (PIL - Matches Training)
+        try:
+             import io
+             from PIL import Image
+             # Load as RGB (Standard for Torchvision)
+             image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+             
+             # Create BGR Copy for Visualization (OpenCV expects BGR)
+             original = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
+        except Exception as e:
+             print(f"Error loading image: {e}")
+             raise ValueError("Could not decode image")
         
-        # Convert to tensor for transform
-        # v2 transforms expect [C, H, W] or [H, W, C] depending... 
-        # Safest is to convert to PIL or torch Tensor [3, H, W]
-        img_rgb = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
-        # Convert to tensor [3, H, W] scaled 0-255 (uint8)
-        tensor = torch.from_numpy(img_rgb).permute(2, 0, 1) 
+        # 2. Preprocess (Transform)
+        # v2.Normalize requires Tensor input, so convert PIL -> Tensor first
+        # v2.functional.to_image converts PIL to Tensor (uint8, [C, H, W])
+        tensor_img = v2.functional.to_image(image_pil)
         
-        # Apply Transform
-        # v2.Resize expects tensor [C, H, W]
-        input_tensor = self.transform(tensor).unsqueeze(0).to(self.device) # [1, 3, 256, 256]
+        # CRITICAL FIX: Convert to Float [0, 1] BEFORE transform (Resize)
+        # This aligns resizing behavior with PredictDataset/CLI (11.24% score)
+        # instead of UInt8 resizing (10.27% score)
+        input_tensor_float = v2.functional.to_dtype(tensor_img, torch.float32, scale=True)
+        
+        # Apply Transform (Resize -> Normalize)
+        input_tensor = self.transform(input_tensor_float).unsqueeze(0).to(self.device) # [1, 3, 256, 256]
 
         # 2. Prepare Batch (for predict_step)
         batch = DictDot({"image": input_tensor})
