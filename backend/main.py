@@ -1,7 +1,7 @@
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from backend.inference.manager import JerryScanModelManager
+from inference.manager import JerryScanModelManager
 import os
 import uvicorn
 
@@ -32,22 +32,43 @@ async def load_models():
         except Exception as e:
             print(f"Failed to load default model: {e}")
     else:
-        print(f"Warning: Model checkpoint not found at {ckpt_path}")
+        print("\n" + "="*60)
+        print("CRITICAL WARNING: MANUAL ACTION REQUIRED")
+        print("="*60)
+        print(f"Model checkpoint NOT found at: {ckpt_path}")
+        print("Please COPY 'model.ckpt' to the project root or backend folder.")
+        print("The system cannot perform inspections without this file.")
+        print("="*60 + "\n")
 
 @app.post("/inspect")
 async def inspect_image(file: UploadFile = File(...), angle_id: str = None):
-    print("here")
     try:
+        # Check if models are loaded BEFORE reading file (fail fast)
+        if not model_manager.models:
+             raise HTTPException(
+                 status_code=503, 
+                 detail="Model not loaded. Server is running but 'model.ckpt' is missing."
+             )
+
         contents = await file.read()
         
         # Get appropriate model (default or specific angle)
-        model = model_manager.get_model(angle_id)
+        try:
+            model = model_manager.get_model(angle_id)
+        except KeyError:
+             # If specific angle fails, try default. If that fails, it's a 503.
+             # But the check above handles the empty case.
+             # This handles "angle_id not found" specifically if we had multiple models.
+             raise HTTPException(status_code=404, detail=f"Model for angle '{angle_id}' not found.")
         
         # Run prediction
         result = model.predict(contents)
  
         return result
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"Inspection Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")

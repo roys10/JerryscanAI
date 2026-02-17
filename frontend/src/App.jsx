@@ -93,7 +93,11 @@ function App() {
 
     } catch (err) {
       console.error(err);
-      setError('Inspection failed. Ensure backend is running.');
+      if (err.response && err.response.data && err.response.data.detail) {
+        setError(`Error: ${err.response.data.detail}`);
+      } else {
+        setError('Inspection failed. Ensure backend is running.');
+      }
     } finally {
       setLoading(false);
     }
