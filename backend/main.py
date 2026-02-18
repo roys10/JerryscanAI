@@ -21,33 +21,55 @@ model_manager = JerryScanModelManager()
 
 @app.on_event("startup")
 async def load_models():
-    # Identify checkpoint path relative to this file
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    ckpt_path = os.path.join(base_dir, "model.ckpt")
+    # Base dir is backend/
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(base_dir)
+    models_dir = os.path.join(project_root, "models")
     
-    if os.path.exists(ckpt_path):
-        try:
-            model_manager.load_model("default", ckpt_path)
-            print(f"Loaded default model from {ckpt_path}")
-        except Exception as e:
-            print(f"Failed to load default model: {e}")
-    else:
-        print("\n" + "="*60)
-        print("CRITICAL WARNING: MANUAL ACTION REQUIRED")
-        print("="*60)
-        print(f"Model checkpoint NOT found at: {ckpt_path}")
-        print("Please COPY 'model.ckpt' to the project root or backend folder.")
-        print("The system cannot perform inspections without this file.")
-        print("="*60 + "\n")
+    # 1. Try loading from 'models/' directory (Preferred)
+    if os.path.exists(models_dir):
+        print(f"Scanning models directory: {models_dir}")
+        model_manager.load_all_models(models_dir)
+
+    # 2. Fallback: Try 'model.ckpt' in root/backend (Legacy/Single File)
+    # Only if no models loaded yet? Or in addition? 
+    # Let's say if we have specific models, we use them.
+    # If we have NO models, we warn.
+    
+    if not model_manager.models:
+        # Check specific locations for legacy model.ckpt
+        legacy_paths = [
+            os.path.join(base_dir, "model.ckpt"),
+            os.path.join(project_root, "model.ckpt")
+        ]
+        loaded_legacy = False
+        for path in legacy_paths:
+            if os.path.exists(path):
+                try:
+                    model_manager.load_model("default", path)
+                    print(f"Loaded legacy default model from {path}")
+                    loaded_legacy = True
+                    break
+                except Exception as e:
+                    print(f"Failed to load legacy model: {e}")
+        
+        if not loaded_legacy:
+            print("\n" + "="*60)
+            print("CRITICAL WARNING: MANUAL ACTION REQUIRED")
+            print("="*60)
+            print(f"No models found in {models_dir}")
+            print(f"And no legacy 'model.ckpt' found in {legacy_paths}")
+            print("Please COPY .ckpt files to 'models/' or 'model.ckpt' to root.")
+            print("="*60 + "\n")
 
 @app.post("/inspect")
 async def inspect_image(file: UploadFile = File(...), angle_id: str = None):
     try:
-        # Check if models are loaded BEFORE reading file (fail fast)
+        # Check if ANY logic is possible (fail fast if 0 models)
         if not model_manager.models:
              raise HTTPException(
                  status_code=503, 
-                 detail="Model not loaded. Server is running but 'model.ckpt' is missing."
+                 detail="System not ready. No models loaded."
              )
 
         contents = await file.read()
@@ -56,10 +78,17 @@ async def inspect_image(file: UploadFile = File(...), angle_id: str = None):
         try:
             model = model_manager.get_model(angle_id)
         except KeyError:
-             # If specific angle fails, try default. If that fails, it's a 503.
-             # But the check above handles the empty case.
-             # This handles "angle_id not found" specifically if we had multiple models.
-             raise HTTPException(status_code=404, detail=f"Model for angle '{angle_id}' not found.")
+             # Graceful Fallback for Batch Mode
+             # If specific angle model is missing, return UNAVAILABLE status
+             return {
+                 "status": "UNAVAILABLE",
+                 "score": 0.0,
+                 "score_percentage": 0.0,
+                 "threshold_percentage": 0.0,
+                 "heatmap_image": None,
+                 "segmentation_image": None,
+                 "original_image": None # Or return the uploaded image encoded?
+             }
         
         # Run prediction
         result = model.predict(contents)
