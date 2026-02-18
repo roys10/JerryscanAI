@@ -88,10 +88,9 @@ function App() {
       const promises = anglesToInspect.map(async (angle) => {
         const formData = new FormData();
         formData.append('file', angleData[angle.id].selectedFile);
-        formData.append('angle_id', angle.id);
 
         try {
-          const response = await axios.post('http://localhost:8000/inspect', formData, {
+          const response = await axios.post(`http://localhost:8000/inspect/${angle.id}`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
           return { id: angle.id, data: response.data, error: null };

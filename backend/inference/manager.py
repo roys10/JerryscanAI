@@ -49,6 +49,7 @@ class JerryScanModelManager:
         """
         Retrieves a model by name.
         """
+        print(name)
         if name is None:
              # If no name provided, try 'default' or fall back to single model
              if "default" in self.models:

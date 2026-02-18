@@ -62,8 +62,9 @@ async def load_models():
             print("Please COPY .ckpt files to 'models/' or 'model.ckpt' to root.")
             print("="*60 + "\n")
 
-@app.post("/inspect")
-async def inspect_image(file: UploadFile = File(...), angle_id: str = None):
+@app.post("/inspect/{angle_id}")
+async def inspect_image(angle_id: str, file: UploadFile = File(...)):
+    print(f"Inspecting angle: {angle_id}")
     try:
         # Check if ANY logic is possible (fail fast if 0 models)
         if not model_manager.models:
@@ -73,7 +74,7 @@ async def inspect_image(file: UploadFile = File(...), angle_id: str = None):
              )
 
         contents = await file.read()
-        
+        print(angle_id, "here")
         # Get appropriate model (default or specific angle)
         try:
             model = model_manager.get_model(angle_id)
