@@ -15,10 +15,8 @@ function App() {
   const angles = [
     { id: 'front', label: 'Front View' },
     { id: 'back', label: 'Back View' },
-    { id: 'side_l', label: 'Side Left' },
-    { id: 'side_r', label: 'Side Right' },
-    { id: 'top', label: 'Top View' },
-    { id: 'bottom', label: 'Bottom View' },
+    { id: 'side_l', label: 'Left Side' },
+    { id: 'side_r', label: 'Right Side' },
   ];
 
   // View Mode State
