@@ -1,14 +1,23 @@
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, RefreshCw } from 'lucide-react';
+import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, RefreshCw, History, LayoutDashboard, Search, Filter } from 'lucide-react';
 import './Inspection.css';
+import './History.css';
 
 function App() {
-  // State for each angle
+  // Navigation
+  const [activePage, setActivePage] = useState('console'); // 'console' or 'history'
+
+  // Console State
   const [angleData, setAngleData] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // History State
+  const [history, setHistory] = useState([]);
+  const [stats, setStats] = useState({ total: 0, passes: 0, fails: 0, pass_rate: 0 });
+  const [filter, setFilter] = useState('all'); // 'all', 'PASS', 'FAIL'
+  const [selectedSession, setSelectedSession] = useState(null);
 
   // Angle Selection State
   const [activeAngle, setActiveAngle] = useState('front');
@@ -28,6 +37,65 @@ function App() {
   // Get current angle's data or empty object
   const currentData = angleData[activeAngle] || {};
   const { selectedFile, previewUrl, result } = currentData;
+
+  useEffect(() => {
+    if (activePage === 'history') {
+      fetchHistory();
+      fetchStats();
+    }
+  }, [activePage, filter]);
+
+  const fetchHistory = async () => {
+    try {
+      const url = filter === 'all'
+        ? 'http://localhost:8000/history'
+        : `http://localhost:8000/history?status=${filter}`;
+      const response = await axios.get(url);
+      setHistory(response.data);
+    } catch (err) {
+      console.error("Failed to fetch history:", err);
+    }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const response = await axios.get('http://localhost:8000/stats');
+      setStats(response.data);
+    } catch (err) {
+      console.error("Failed to fetch stats:", err);
+    }
+  };
+
+  const simulateTrigger = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.post('http://localhost:8000/simulate-trigger');
+      // After simulation, maybe show the result in the console? 
+      // For now, let's just refresh history if we are there.
+      if (activePage === 'history') {
+        fetchHistory();
+        fetchStats();
+      } else {
+        // Load the simulated results into the console view
+        const simData = {};
+        angles.forEach(a => {
+          if (response.data.angles[a.id]) {
+            simData[a.id] = {
+              result: response.data.angles[a.id],
+              previewUrl: response.data.angles[a.id].original_image // If backend returns it
+            };
+          }
+        });
+        setAngleData(simData);
+        setGlobalResult(response.data.overall_status);
+      }
+    } catch (err) {
+      setError("Simulation failed: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   const handleFileChange = (event) => {
     const file = event.target.files[0];
@@ -69,9 +137,7 @@ function App() {
   };
 
   const runBatchInspection = async () => {
-    // 1. Identify valid uploads
     const anglesToInspect = angles.filter(a => angleData[a.id]?.selectedFile);
-
     if (anglesToInspect.length === 0) {
       setError("No images uploaded to inspect.");
       return;
@@ -81,88 +147,48 @@ function App() {
     setError(null);
     setGlobalResult(null);
 
-    try {
-      // 2. Create Promises for all angles
-      const promises = anglesToInspect.map(async (angle) => {
-        const formData = new FormData();
-        formData.append('file', angleData[angle.id].selectedFile);
+    const formData = new FormData();
+    anglesToInspect.forEach(angle => {
+      formData.append(angle.id, angleData[angle.id].selectedFile);
+    });
 
-        try {
-          const response = await axios.post(`http://localhost:8000/inspect/${angle.id}`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-          });
-          return { id: angle.id, data: response.data, error: null };
-        } catch (err) {
-          console.error(`Error inspecting ${angle.id}:`, err);
-          return { id: angle.id, data: null, error: err };
-        }
+    try {
+      const response = await axios.post('http://localhost:8000/inspect-batch', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
 
-      // 3. Wait for all
-      const results = await Promise.all(promises);
+      const { overall_status, angles: results } = response.data;
 
-      // 4. Update State
       const newAngleData = { ...angleData };
-      let anyFail = false;
-      let anyPass = false;
-      let errorMsg = null;
-
-      results.forEach(res => {
-        if (res.data) {
-          newAngleData[res.id] = { ...newAngleData[res.id], result: res.data };
-          if (res.data.status === 'FAIL') anyFail = true;
-          if (res.data.status === 'PASS') anyPass = true;
-        } else if (res.error) {
-          // Network/Server error for this specific angle
-          errorMsg = res.error.response?.data?.detail || "Inspection Failed";
-        }
+      Object.keys(results).forEach(id => {
+        newAngleData[id] = { ...newAngleData[id], result: results[id] };
       });
 
       setAngleData(newAngleData);
-
-      // 5. Determine Global Status
-      if (errorMsg) {
-        setError(`Partial Error: ${errorMsg}`);
-      }
-
-      if (anyFail) {
-        setGlobalResult("FAIL");
-      } else if (anyPass) {
-        setGlobalResult("PASS");
-      } else {
-        setGlobalResult("UNAVAILABLE"); // All were unavailable or empty
-      }
+      setGlobalResult(overall_status);
 
     } catch (err) {
       console.error(err);
-      setError('System Error: Batch inspection failed.');
+      setError('Inspection Failed: ' + (err.response?.data?.detail || 'System error'));
     } finally {
       setLoading(false);
     }
   };
 
+
   const clearState = () => {
     setAngleData({});
     setGlobalResult(null);
     setError(null);
-  }
+  };
 
   // Calculate overall stats
-  const inspectedCount = Object.values(angleData).filter(d => d.selectedFile).length;
+  const inspectedCount = Object.values(angleData).filter(d => d.selectedFile || d.result).length;
 
-  return (
-    <div className="inspection-container">
-      <header className="header">
-        <div className="title">
-          <Brain size={28} color="var(--primary-color)" />
-          <span>JerryScan AI <span style={{ fontSize: '0.8em', color: 'var(--text-muted)', fontWeight: '400' }}>| Inspection Console</span></span>
-        </div>
-        <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-          <strong>Operator:</strong> Admin &nbsp;|&nbsp; <strong>Ready to Inspect:</strong> {inspectedCount} Angles
-        </div>
-      </header>
 
-      {/* GLOBAL STATUS BANNER */}
+  const renderConsole = () => (
+    <>
+      {/* GLOBAL STATUS BANNER (Old design restored) */}
       {globalResult && (
         <div className={`global-banner ${globalResult === 'PASS' ? 'banner-pass' : globalResult === 'FAIL' ? 'banner-fail' : 'banner-neutral'}`}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
@@ -180,14 +206,14 @@ function App() {
             <h3>Camera Selection</h3>
             <div className="angle-grid">
               {angles.map((angle) => {
-                const hasData = angleData[angle.id]?.selectedFile;
+                const hasData = angleData[angle.id]?.selectedFile || angleData[angle.id]?.result;
                 const result = angleData[angle.id]?.result;
                 const status = result?.status;
 
-                let statusColor = '#9ca3af'; // Grey (Default)
+                let statusColor = '#9ca3af';
                 if (status === 'PASS') statusColor = '#10b981';
                 if (status === 'FAIL') statusColor = '#ef4444';
-                if (status === 'UNAVAILABLE') statusColor = '#f59e0b'; // Amber
+                if (status === 'UNAVAILABLE') statusColor = '#f59e0b';
 
                 return (
                   <div
@@ -198,21 +224,15 @@ function App() {
                   >
                     <Camera size={20} style={{ marginBottom: '0.25rem' }} />
                     <div>{angle.label}</div>
-
-                    {/* Status Indicator */}
                     {hasData && (
                       <div style={{
                         position: 'absolute', top: 6, right: 6, width: 10, height: 10, borderRadius: '50%',
-                        backgroundColor: statusColor,
-                        border: '1px solid white'
-                      }} title={status || "Uploaded"}></div>
+                        backgroundColor: statusColor, border: '1px solid white'
+                      }}></div>
                     )}
                   </div>
                 );
               })}
-            </div>
-            <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              * Select an angle to upload. Green dot = Pass, Red = Fail, Orange = Model Unavailable.
             </div>
           </div>
 
@@ -224,21 +244,17 @@ function App() {
               disabled={loading || inspectedCount === 0}
             >
               {loading ? <Loader2 className="spin" size={20} /> : <Brain size={20} />}
-              {loading ? 'Inspecting All on 6 Cameras...' : `Run Inspection (${inspectedCount})`}
+              {loading ? 'Inspecting Batch...' : `Run Inspection (${inspectedCount})`}
             </button>
-
             <div style={{ marginTop: '1rem' }}>
-              <button
-                className="btn-secondary"
-                onClick={clearState}
-              >
-                <RefreshCw size={16} style={{ marginRight: '0.5rem', verticalAlign: 'middle' }} /> Reset Session
+              <button className="btn-secondary" onClick={clearState}>
+                <RefreshCw size={16} /> Reset Session
               </button>
             </div>
           </div>
 
           {error && (
-            <div style={{ color: '#ef4444', background: '#fee2e2', padding: '1rem', borderRadius: '0.5rem', display: 'flex', gap: '0.5rem' }}>
+            <div style={{ color: '#ef4444', background: '#fee2e2', padding: '1rem', borderRadius: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <AlertCircle size={20} /> <span style={{ fontSize: '0.9rem' }}>{error}</span>
             </div>
           )}
@@ -247,105 +263,182 @@ function App() {
         {/* Right Panel: Viewport */}
         <div className="card" style={{ minHeight: '600px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h3>Inspection View - {angles.find(a => a.id === activeAngle)?.label}</h3>
-
+            <h3>{angles.find(a => a.id === activeAngle)?.label}</h3>
             {result && result.status !== 'UNAVAILABLE' && (
               <div style={{ display: 'flex', gap: '0.5rem', background: '#f3f4f6', padding: '0.25rem', borderRadius: '0.375rem' }}>
-                <button
-                  onClick={() => setViewMode('heatmap')}
-                  style={{
-                    border: 'none', background: viewMode === 'heatmap' ? 'white' : 'transparent',
-                    padding: '0.25rem 0.75rem', borderRadius: '0.25rem', fontSize: '0.875rem', fontWeight: 500,
-                    boxShadow: viewMode === 'heatmap' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none', cursor: 'pointer'
-                  }}
-                >Anomaly Map</button>
-                <button
-                  onClick={() => setViewMode('segmentation')}
-                  style={{
-                    border: 'none', background: viewMode === 'segmentation' ? 'white' : 'transparent',
-                    padding: '0.25rem 0.75rem', borderRadius: '0.25rem', fontSize: '0.875rem', fontWeight: 500,
-                    boxShadow: viewMode === 'segmentation' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none', cursor: 'pointer'
-                  }}
-                >Pred Mask</button>
+                <button onClick={() => setViewMode('heatmap')} style={{ border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', background: viewMode === 'heatmap' ? 'white' : 'transparent', borderRadius: '0.25rem' }}>Anomaly Map</button>
+                <button onClick={() => setViewMode('segmentation')} style={{ border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', background: viewMode === 'segmentation' ? 'white' : 'transparent', borderRadius: '0.25rem' }}>Pred Mask</button>
               </div>
             )}
           </div>
 
-          {!previewUrl ? (
-            <div
-              className="upload-zone"
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              onClick={() => document.getElementById('fileInput').click()}
-            >
-              <div style={{ background: 'white', padding: '1rem', borderRadius: '50%', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', marginBottom: '1.5rem' }}>
-                <Upload size={32} className="upload-icon" style={{ marginBottom: 0 }} />
-              </div>
-              <h4 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-main)' }}>Upload Image</h4>
-              <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-                Drag & drop or click to browse
-              </p>
-              <input
-                id="fileInput"
-                type="file"
-                hidden
-                accept="image/*"
-                onChange={handleFileChange}
-              />
+          {!previewUrl && !result ? (
+            <div className="upload-zone" onClick={() => document.getElementById('fileInput').click()}>
+              <Upload size={32} color="var(--primary-color)" />
+              <h4>Upload Image</h4>
+              <input id="fileInput" type="file" hidden accept="image/*" onChange={handleFileChange} />
             </div>
           ) : (
             <div className="preview-container">
               {result ? (
-                <>
-                  {result.status === 'UNAVAILABLE' ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'white' }}>
-                      <AlertCircle size={48} color="#f59e0b" style={{ marginBottom: '1rem' }} />
-                      <h3 style={{ color: '#f59e0b' }}>Model Unavailable</h3>
-                      <p>No AI model loaded for this angle.</p>
-                      <img src={previewUrl} style={{ maxWidth: '200px', marginTop: '1rem', opacity: 0.5 }} />
+                result.status === 'UNAVAILABLE' ? (
+                  <div style={{ textAlign: 'center', color: 'white' }}>
+                    <AlertCircle size={48} color="#f59e0b" />
+                    <h3 style={{ color: '#f59e0b', margin: '0.5rem 0' }}>Model Unavailable</h3>
+                    <p style={{ margin: '0.5rem 0' }}>No AI model loaded for this angle.</p>
+                    {result.original_image && <img src={result.original_image} style={{ maxWidth: '200px', opacity: 0.5 }} />}
+                  </div>
+                ) : (
+                  <>
+                    <div className={`status-badge ${result.status === 'PASS' ? 'status-pass' : 'status-fail'}`}>
+                      {result.status} ({result.score_percentage?.toFixed(1)}%)
                     </div>
-                  ) : (
-                    <>
-                      <div className={`status-badge ${result.status === 'PASS' ? 'status-pass' : 'status-fail'}`}>
-                        {result.status} (Score: {result.score_percentage?.toFixed(2)}%)
-                      </div>
-                      <img
-                        src={viewMode === 'heatmap' ? result.heatmap_image : result.segmentation_image}
-                        alt="Result"
-                        className="preview-image"
-                      />
-                      <div className="image-label" style={{ position: 'absolute', bottom: 10, left: 10, background: 'rgba(0,0,0,0.7)', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '12px' }}>
-                        {viewMode === 'heatmap' ? 'Image + Anomaly Map' : 'Image + Pred Mask'}
-                      </div>
-                    </>
-                  )}
-                </>
+                    <img src={viewMode === 'heatmap' ? result.heatmap_image : result.segmentation_image} className="preview-image" />
+                  </>
+                )
               ) : (
-                <img src={previewUrl} alt="Preview" className="preview-image" />
+                <img src={previewUrl} className="preview-image" />
               )}
             </div>
           )}
-
-          <div style={{ marginTop: '1rem', display: 'flex', gap: '2rem', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-            {(result && result.status !== 'UNAVAILABLE') ? (
-              viewMode === 'heatmap' ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.8rem' }}>Normal</span>
-                  <div style={{
-                    width: 100, height: 12, borderRadius: 6,
-                    background: 'linear-gradient(90deg, blue, cyan, yellow, red)'
-                  }}></div>
-                  <span style={{ fontSize: '0.8rem' }}>Anomaly</span>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <div style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid red' }}></div> Pred Mask
-                </div>
-              )
-            ) : null}
-          </div>
         </div>
       </div>
+    </>
+  );
+
+  const renderHistory = () => (
+    <div className="history-container">
+      <div className="stats-grid">
+        <div className="stat-card">
+          <h4>Total Scans</h4>
+          <div className="stat-value">{stats.total}</div>
+        </div>
+        <div className="stat-card">
+          <h4>Pass Rate</h4>
+          <div className="stat-value">{stats.pass_rate?.toFixed(1)}%</div>
+        </div>
+        <div className="stat-card">
+          <h4>Passes</h4>
+          <div className="stat-value" style={{ color: '#10b981' }}>{stats.passes}</div>
+        </div>
+        <div className="stat-card fail">
+          <h4>Defects Found</h4>
+          <div className="stat-value" style={{ color: '#ef4444' }}>{stats.fails}</div>
+        </div>
+      </div>
+
+      <div className="history-controls">
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <Filter size={18} />
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ padding: '0.5rem', borderRadius: '0.375rem', border: '1px solid var(--border-color)' }}
+          >
+            <option value="all">All Results</option>
+            <option value="PASS">Pass Only</option>
+            <option value="FAIL">Fail Only</option>
+          </select>
+        </div>
+        <div style={{ color: 'var(--text-muted)' }}>Showing last {history.length} records</div>
+      </div>
+
+      <div className="history-table-container">
+        <table className="history-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Jerrycan ID</th>
+              <th>Overall Status</th>
+              <th>Angles Checked</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.map(session => (
+              <tr key={session.id} onClick={() => {
+                setAngleData(session.angles);
+                setGlobalResult(session.overall_status);
+                setActivePage('console');
+              }}>
+                <td>{new Date(session.timestamp).toLocaleString()}</td>
+                <td><code style={{ fontSize: '0.75rem' }}>{session.id.split('-')[0]}...</code></td>
+                <td>
+                  <span className={`status-row-badge ${session.overall_status === 'PASS' ? 'badge-pass' : 'badge-fail'}`}>
+                    {session.overall_status}
+                  </span>
+                </td>
+                <td>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[['front', 'Front'], ['back', 'Back'], ['side_l', 'L'], ['side_r', 'R']].map(([id, label]) => (
+                      <div key={id} style={{
+                        width: 14, height: 14, borderRadius: '2px', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white',
+                        background: !session.angles[id] ? '#e5e7eb' : (session.angles[id].status === 'PASS' ? '#10b981' : (session.angles[id].status === 'FAIL' ? '#ef4444' : '#f59e0b'))
+                      }} title={label}>{label}</div>
+                    ))}
+                  </div>
+                </td>
+                <td style={{ color: 'var(--primary-color)', fontWeight: 600 }}>View Details</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+
+  return (
+    <div className="inspection-container">
+      <header className="header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
+          <div className="title">
+            <Brain size={28} color="var(--primary-color)" />
+            <span>JerryScan AI</span>
+          </div>
+          <nav style={{ display: 'flex', gap: '1.5rem', borderLeft: '1px solid var(--border-color)', paddingLeft: '1.5rem' }}>
+            <div
+              onClick={() => setActivePage('console')}
+              style={{
+                cursor: 'pointer',
+                fontWeight: activePage === 'console' ? '700' : '500',
+                color: activePage === 'console' ? 'var(--primary-color)' : 'var(--text-muted)',
+                display: 'flex', alignItems: 'center', gap: '0.5rem'
+              }}
+            >
+              <LayoutDashboard size={18} /> Manual Inspection
+            </div>
+            <div
+              onClick={() => setActivePage('history')}
+              style={{
+                cursor: 'pointer',
+                fontWeight: activePage === 'history' ? '700' : '500',
+                color: activePage === 'history' ? 'var(--primary-color)' : 'var(--text-muted)',
+                display: 'flex', alignItems: 'center', gap: '0.5rem'
+              }}
+            >
+              <History size={18} /> History & Analytics
+            </div>
+          </nav>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <button
+            className="btn-secondary"
+            onClick={simulateTrigger}
+            disabled={loading}
+            style={{ width: 'auto', padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
+          >
+            {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+            &nbsp; Simulate Remote Trigger
+          </button>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', borderLeft: '1px solid var(--border-color)', paddingLeft: '1rem' }}>
+            <strong>Operator:</strong> Admin
+          </div>
+        </div>
+      </header>
+
+      {activePage === 'console' ? renderConsole() : renderHistory()}
     </div>
   );
 }

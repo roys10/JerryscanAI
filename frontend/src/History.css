@@ -1,0 +1,118 @@
+.history-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+    color: var(--text-main);
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-left: 4px solid var(--primary-color);
+}
+
+.stat-card.fail {
+    border-left-color: #ef4444;
+}
+
+.stat-card h4 {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-top: 0.5rem;
+}
+
+.history-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.history-table-container {
+    background: white;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+}
+
+.history-table th {
+    background: #f9fafb;
+    padding: 1rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.history-table td {
+    padding: 1rem;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.history-table tr:hover {
+    background: #f9fafb;
+    cursor: pointer;
+}
+
+.status-row-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.badge-pass {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.badge-fail {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.navbar {
+    background: #111827;
+    padding: 1rem 2rem;
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 0;
+}
+
+.nav-item {
+    color: #9ca3af;
+    text-decoration: none;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.nav-item.active {
+    color: white;
+}
+
+.nav-item:hover {
+    color: white;
+}

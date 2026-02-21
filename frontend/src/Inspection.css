@@ -1,5 +1,5 @@
 .inspection-container {
-    max-width: 1400px;
+    max-width: 1200px;
     margin: 0 auto;
     padding: 2rem;
     text-align: left;
@@ -226,7 +226,7 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: white;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     animation: fadeIn 0.5s ease-out;
 }
 
@@ -246,6 +246,13 @@
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
