@@ -7,6 +7,7 @@ import './History.css';
 function App() {
   // Navigation
   const [activePage, setActivePage] = useState('console'); // 'console' or 'history'
+  const [isArchiveView, setIsArchiveView] = useState(false);
 
   // Console State
   const [angleData, setAngleData] = useState({});
@@ -185,17 +186,103 @@ function App() {
   // Calculate overall stats
   const inspectedCount = Object.values(angleData).filter(d => d.selectedFile || d.result).length;
 
+  const renderNavbar = () => (
+    <nav className="navbar">
+      <div className="navbar-content">
+        <div className="navbar-left">
+          <div className="title" style={{ color: 'white', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <Brain size={24} color="var(--primary-color)" />
+            <span style={{ fontWeight: '700', letterSpacing: '0.05em' }}>JERRYSCAN AI</span>
+          </div>
+
+          <div style={{ width: '1px', height: '24px', background: '#334155', margin: '0 2rem' }} />
+
+          <div
+            className={`nav-item ${activePage === 'console' && !isArchiveView ? 'active' : ''}`}
+            onClick={() => {
+              setActivePage('console');
+              setIsArchiveView(false);
+              clearState();
+            }}
+          >
+            <LayoutDashboard size={18} /> Manual Inspection
+          </div>
+          <div
+            className={`nav-item ${activePage === 'history' && !isArchiveView ? 'active' : ''}`}
+            onClick={() => {
+              setActivePage('history');
+              setIsArchiveView(false);
+            }}
+          >
+            <History size={18} /> History & Analytics
+          </div>
+        </div>
+        <div className="navbar-right" style={{ display: 'flex', alignItems: 'center' }}>
+          <div style={{ width: '1px', height: '24px', background: '#334155', marginRight: '1.5rem' }} />
+          {isArchiveView ? (
+            <button
+              className="btn-simulation"
+              onClick={() => { setActivePage('history'); setIsArchiveView(false); }}
+              style={{ background: '#1e293b', borderColor: '#334155' }}
+            >
+              <XCircle size={16} /> Close Report
+            </button>
+          ) : (
+            <button
+              className="btn-simulation"
+              onClick={simulateTrigger}
+              disabled={loading}
+              style={{ marginRight: '-0.5rem' }}
+            >
+              {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+              Simulate Trigger
+            </button>
+          )}
+        </div>
+      </div>
+    </nav>
+  );
+
 
   const renderConsole = () => (
     <>
       {/* GLOBAL STATUS BANNER (Old design restored) */}
       {globalResult && (
-        <div className={`global-banner ${globalResult === 'PASS' ? 'banner-pass' : globalResult === 'FAIL' ? 'banner-fail' : 'banner-neutral'}`}>
+        <div className={`global-banner ${globalResult === 'PASS' ? 'banner-pass' : globalResult === 'FAIL' ? 'banner-fail' : 'banner-neutral'}`}
+          style={isArchiveView ? { borderStyle: 'dashed', opacity: 0.95, marginBottom: '0.5rem' } : {}}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
-            {globalResult === 'PASS' ? <CheckCircle size={32} /> : globalResult === 'FAIL' ? <XCircle size={32} /> : <AlertCircle size={32} />}
-            <span>JERRYCAN STATUS: {globalResult}</span>
+            {isArchiveView ? <History size={32} /> : (globalResult === 'PASS' ? <CheckCircle size={32} /> : globalResult === 'FAIL' ? <XCircle size={32} /> : <AlertCircle size={32} />)}
+            <span>{isArchiveView ? 'ARCHIVED REPORT:' : 'JERRYCAN STATUS:'} {globalResult}</span>
           </div>
-          {globalResult === 'FAIL' && <div style={{ fontSize: '0.9rem', marginTop: '0.25rem', opacity: 0.9 }}>Defects detected in one or more angles. Check details below.</div>}
+          {globalResult === 'FAIL' && <div style={{ fontSize: '0.9rem', marginTop: '0.25rem', opacity: 0.9 }}>
+            {isArchiveView ? 'Defects were detected during this session.' : 'Defects detected in one or more angles. Check details below.'}
+          </div>}
+        </div>
+      )}
+
+      {/* ARCHIVE METADATA BAR */}
+      {isArchiveView && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          gap: '2rem',
+          padding: '0.5rem',
+          background: '#f8fafc',
+          borderRadius: '0.375rem',
+          marginBottom: '1.5rem',
+          fontSize: '0.8rem',
+          color: '#64748b',
+          border: '1px solid #e2e8f0',
+          animation: 'fadeIn 0.5s ease-out'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <History size={14} />
+            <span><strong>Log Time:</strong> {new Date().toLocaleString()}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <AlertCircle size={14} />
+            <span><strong>Mode:</strong> Read-Only Archive Report</span>
+          </div>
         </div>
       )}
 
@@ -203,7 +290,7 @@ function App() {
         {/* Left Panel: Controls & Angles */}
         <div className="control-panel">
           <div className="card">
-            <h3>Camera Selection</h3>
+            <h3>{isArchiveView ? 'Historical Data' : 'Camera Selection'}</h3>
             <div className="angle-grid">
               {angles.map((angle) => {
                 const hasData = angleData[angle.id]?.selectedFile || angleData[angle.id]?.result;
@@ -238,19 +325,33 @@ function App() {
 
           <div className="card">
             <h3>Actions</h3>
-            <button
-              className="btn-primary"
-              onClick={runBatchInspection}
-              disabled={loading || inspectedCount === 0}
-            >
-              {loading ? <Loader2 className="spin" size={20} /> : <Brain size={20} />}
-              {loading ? 'Inspecting Batch...' : `Run Inspection (${inspectedCount})`}
-            </button>
-            <div style={{ marginTop: '1rem' }}>
-              <button className="btn-secondary" onClick={clearState}>
-                <RefreshCw size={16} /> Reset Session
-              </button>
-            </div>
+            {!isArchiveView ? (
+              <>
+                <button
+                  className="btn-primary"
+                  onClick={runBatchInspection}
+                  disabled={loading || inspectedCount === 0}
+                >
+                  {loading ? <Loader2 className="spin" size={20} /> : <Brain size={20} />}
+                  {loading ? 'Inspecting Batch...' : `Run Inspection (${inspectedCount})`}
+                </button>
+                <div style={{ marginTop: '1rem' }}>
+                  <button className="btn-secondary" onClick={clearState}>
+                    <RefreshCw size={16} /> Reset Session
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '0.375rem', fontSize: '0.85rem', color: 'var(--text-muted)', border: '1px solid #e2e8f0' }}>
+                  <AlertCircle size={16} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
+                  Viewing archived report. Manual controls are disabled.
+                </div>
+                <button className="btn-primary" onClick={() => { setActivePage('history'); setIsArchiveView(false); }}>
+                  <History size={18} /> Back to History
+                </button>
+              </div>
+            )}
           </div>
 
           {error && (
@@ -273,10 +374,10 @@ function App() {
           </div>
 
           {!previewUrl && !result ? (
-            <div className="upload-zone" onClick={() => document.getElementById('fileInput').click()}>
-              <Upload size={32} color="var(--primary-color)" />
-              <h4>Upload Image</h4>
-              <input id="fileInput" type="file" hidden accept="image/*" onChange={handleFileChange} />
+            <div className={`upload-zone ${isArchiveView ? 'disabled' : ''}`} onClick={() => !isArchiveView && document.getElementById('fileInput').click()}>
+              <Upload size={32} color={isArchiveView ? '#94a3b8' : "var(--primary-color)"} />
+              <h4>{isArchiveView ? 'No Image Data' : 'Upload Image'}</h4>
+              {!isArchiveView && <input id="fileInput" type="file" hidden accept="image/*" onChange={handleFileChange} />}
             </div>
           ) : (
             <div className="preview-container">
@@ -357,8 +458,22 @@ function App() {
           <tbody>
             {history.map(session => (
               <tr key={session.id} onClick={() => {
-                setAngleData(session.angles);
+                // Properly map the historical results into the state structure
+                const mappedData = {};
+                Object.keys(session.angles).forEach(id => {
+                  mappedData[id] = {
+                    result: session.angles[id],
+                    previewUrl: session.angles[id].original_image
+                  };
+                });
+                setAngleData(mappedData);
                 setGlobalResult(session.overall_status);
+
+                // Find first angle with data to focus on
+                const firstAngle = Object.keys(session.angles)[0];
+                if (firstAngle) setActiveAngle(firstAngle);
+
+                setIsArchiveView(true);
                 setActivePage('console');
               }}>
                 <td>{new Date(session.timestamp).toLocaleString()}</td>
@@ -389,56 +504,12 @@ function App() {
 
 
   return (
-    <div className="inspection-container">
-      <header className="header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
-          <div className="title">
-            <Brain size={28} color="var(--primary-color)" />
-            <span>JerryScan AI</span>
-          </div>
-          <nav style={{ display: 'flex', gap: '1.5rem', borderLeft: '1px solid var(--border-color)', paddingLeft: '1.5rem' }}>
-            <div
-              onClick={() => setActivePage('console')}
-              style={{
-                cursor: 'pointer',
-                fontWeight: activePage === 'console' ? '700' : '500',
-                color: activePage === 'console' ? 'var(--primary-color)' : 'var(--text-muted)',
-                display: 'flex', alignItems: 'center', gap: '0.5rem'
-              }}
-            >
-              <LayoutDashboard size={18} /> Manual Inspection
-            </div>
-            <div
-              onClick={() => setActivePage('history')}
-              style={{
-                cursor: 'pointer',
-                fontWeight: activePage === 'history' ? '700' : '500',
-                color: activePage === 'history' ? 'var(--primary-color)' : 'var(--text-muted)',
-                display: 'flex', alignItems: 'center', gap: '0.5rem'
-              }}
-            >
-              <History size={18} /> History & Analytics
-            </div>
-          </nav>
-        </div>
+    <div className="app-root">
+      {renderNavbar()}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <button
-            className="btn-secondary"
-            onClick={simulateTrigger}
-            disabled={loading}
-            style={{ width: 'auto', padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
-          >
-            {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-            &nbsp; Simulate Remote Trigger
-          </button>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', borderLeft: '1px solid var(--border-color)', paddingLeft: '1rem' }}>
-            <strong>Operator:</strong> Admin
-          </div>
-        </div>
-      </header>
-
-      {activePage === 'console' ? renderConsole() : renderHistory()}
+      <div className="inspection-container">
+        {activePage === 'console' ? renderConsole() : renderHistory()}
+      </div>
     </div>
   );
 }
