@@ -8,6 +8,7 @@ function App() {
   // Navigation
   const [activePage, setActivePage] = useState('console'); // 'console' or 'history'
   const [isArchiveView, setIsArchiveView] = useState(false);
+  const [selectedSession, setSelectedSession] = useState(null);
 
   // Console State
   const [angleData, setAngleData] = useState({});
@@ -18,7 +19,6 @@ function App() {
   const [history, setHistory] = useState([]);
   const [stats, setStats] = useState({ total: 0, passes: 0, fails: 0, pass_rate: 0 });
   const [filter, setFilter] = useState('all'); // 'all', 'PASS', 'FAIL'
-  const [selectedSession, setSelectedSession] = useState(null);
 
   // Angle Selection State
   const [activeAngle, setActiveAngle] = useState('front');
@@ -202,6 +202,7 @@ function App() {
             onClick={() => {
               setActivePage('console');
               setIsArchiveView(false);
+              setSelectedSession(null);
               clearState();
             }}
           >
@@ -212,6 +213,7 @@ function App() {
             onClick={() => {
               setActivePage('history');
               setIsArchiveView(false);
+              setSelectedSession(null);
             }}
           >
             <History size={18} /> History & Analytics
@@ -222,7 +224,7 @@ function App() {
           {isArchiveView ? (
             <button
               className="btn-simulation"
-              onClick={() => { setActivePage('history'); setIsArchiveView(false); }}
+              onClick={() => { setActivePage('history'); setIsArchiveView(false); setSelectedSession(null); }}
               style={{ background: '#1e293b', borderColor: '#334155' }}
             >
               <XCircle size={16} /> Close Report
@@ -277,7 +279,7 @@ function App() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <History size={14} />
-            <span><strong>Log Time:</strong> {new Date().toLocaleString()}</span>
+            <span><strong>Log Time:</strong> {selectedSession ? new Date(selectedSession.timestamp).toLocaleString() : 'N/A'}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <AlertCircle size={14} />
@@ -347,7 +349,7 @@ function App() {
                   <AlertCircle size={16} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
                   Viewing archived report. Manual controls are disabled.
                 </div>
-                <button className="btn-primary" onClick={() => { setActivePage('history'); setIsArchiveView(false); }}>
+                <button className="btn-primary" onClick={() => { setActivePage('history'); setIsArchiveView(false); setSelectedSession(null); }}>
                   <History size={18} /> Back to History
                 </button>
               </div>
@@ -468,6 +470,7 @@ function App() {
                 });
                 setAngleData(mappedData);
                 setGlobalResult(session.overall_status);
+                setSelectedSession(session);
 
                 // Find first angle with data to focus on
                 const firstAngle = Object.keys(session.angles)[0];
