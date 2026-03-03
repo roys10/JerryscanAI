@@ -20,6 +20,10 @@ function App() {
   const [stats, setStats] = useState({ total: 0, passes: 0, fails: 0, pass_rate: 0 });
   const [filter, setFilter] = useState('all'); // 'all', 'PASS', 'FAIL'
 
+  // Multi-Model State
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
+
   // Angle Selection State
   const [activeAngle, setActiveAngle] = useState('front');
   const angles = [
@@ -40,11 +44,24 @@ function App() {
   const { selectedFile, previewUrl, result } = currentData;
 
   useEffect(() => {
+    fetchModels();
     if (activePage === 'history') {
       fetchHistory();
       fetchStats();
     }
   }, [activePage, filter]);
+
+  const fetchModels = async () => {
+    try {
+      const response = await axios.get('http://localhost:8000/models');
+      setAvailableModels(response.data);
+      if (response.data.length > 0 && !selectedModel) {
+        setSelectedModel(response.data[0]);
+      }
+    } catch (err) {
+      console.error("Failed to fetch models:", err);
+    }
+  };
 
   const fetchHistory = async () => {
     try {
@@ -70,7 +87,7 @@ function App() {
   const simulateTrigger = async () => {
     setLoading(true);
     try {
-      const response = await axios.post('http://localhost:8000/simulate-trigger');
+      const response = await axios.post(`http://localhost:8000/simulate-trigger?model_name=${selectedModel}`);
       // After simulation, maybe show the result in the console? 
       // For now, let's just refresh history if we are there.
       if (activePage === 'history') {
@@ -154,7 +171,7 @@ function App() {
     });
 
     try {
-      const response = await axios.post('http://localhost:8000/inspect-batch', formData, {
+      const response = await axios.post(`http://localhost:8000/inspect-batch?model_name=${selectedModel}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -282,6 +299,10 @@ function App() {
             <span><strong>Log Time:</strong> {selectedSession ? new Date(selectedSession.timestamp).toLocaleString() : 'N/A'}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Brain size={14} />
+            <span><strong>Model Set:</strong> {selectedSession?.model_name || 'Standard'}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <AlertCircle size={14} />
             <span><strong>Mode:</strong> Read-Only Archive Report</span>
           </div>
@@ -291,6 +312,26 @@ function App() {
       <div className="main-content">
         {/* Left Panel: Controls & Angles */}
         <div className="control-panel">
+          <div className="card">
+            <h3>Model Configuration</h3>
+            <div style={{ marginTop: '0.5rem' }}>
+              <select
+                className="model-selector"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={isArchiveView || loading}
+              >
+                {availableModels.length === 0 && <option value="">Loading models...</option>}
+                {availableModels.map(name => (
+                  <option key={name} value={name}>{name.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
+              <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                {isArchiveView ? 'Running inspection is disabled in archive view' : 'Select optimized model set for current batch.'}
+              </div>
+            </div>
+          </div>
+
           <div className="card">
             <h3>{isArchiveView ? 'Historical Data' : 'Camera Selection'}</h3>
             <div className="angle-grid">
@@ -452,6 +493,7 @@ function App() {
             <tr>
               <th>Timestamp</th>
               <th>Jerrycan ID</th>
+              <th>Model Version</th>
               <th>Overall Status</th>
               <th>Angles Checked</th>
               <th>Action</th>
@@ -481,6 +523,7 @@ function App() {
               }}>
                 <td>{new Date(session.timestamp).toLocaleString()}</td>
                 <td><code style={{ fontSize: '0.75rem' }}>{session.id.split('-')[0]}...</code></td>
+                <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{session.model_name || 'Standard'}</td>
                 <td>
                   <span className={`status-row-badge ${session.overall_status === 'PASS' ? 'badge-pass' : 'badge-fail'}`}>
                     {session.overall_status}

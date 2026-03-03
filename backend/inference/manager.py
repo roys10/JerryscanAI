@@ -1,69 +1,81 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from .core import JerryScanPadimModel
 import os
 
 class JerryScanModelManager:
     def __init__(self):
-        self.models: Dict[str, JerryScanPadimModel] = {}
-        self.default_model_name = "default"
+        # Structure: { "model_name": { "angle_id": JerryScanPadimModel } }
+        self.models: Dict[str, Dict[str, JerryScanPadimModel]] = {}
 
-    def load_model(self, name: str, path: str, model_type: str = "padim"):
+    def load_model(self, model_name: str, angle_id: str, path: str, model_type: str = "padim"):
         """
-        Loads a model and registers it under the given name.
+        Loads a single angle model into a specific model set.
         """
         if not os.path.exists(path):
             raise FileNotFoundError(f"Model checkpoint not found at {path}")
         
-        print(f"Loading model '{name}' from {path}...")
+        if model_name not in self.models:
+            self.models[model_name] = {}
+
+        print(f"Loading model '{model_name}' - '{angle_id}' from {path}...")
         if model_type == "padim":
-            self.models[name] = JerryScanPadimModel(path)
+            self.models[model_name][angle_id] = JerryScanPadimModel(path)
         else:
             raise ValueError(f"Unknown model type: {model_type}")
         
-        print(f"Model '{name}' loaded.")
-
-    def load_all_models(self, models_dir: str):
+    def load_all_models(self, base_models_dir: str):
         """
-        Scans the directory for .ckpt files and loads them.
-        The filename (without extension) becomes the model name.
+        Scans base_models_dir for subdirectories. 
+        Each subdirectory name is a model set.
+        Inside each subdirectory, .ckpt files are loaded as angles.
         """
-        if not os.path.exists(models_dir):
-            print(f"Models directory not found at {models_dir}")
+        if not os.path.exists(base_models_dir):
+            print(f"Models directory not found at {base_models_dir}")
             return
 
-        print(f"Scanning for models in {models_dir}...")
-        count = 0
-        for filename in os.listdir(models_dir):
-            if filename.endswith(".ckpt"):
-                name = os.path.splitext(filename)[0] # e.g., "front.ckpt" -> "front"
-                path = os.path.join(models_dir, filename)
-                try:
-                    self.load_model(name, path)
-                    count += 1
-                except Exception as e:
-                    print(f"Failed to load model '{name}': {e}")
+        print(f"Scanning for model sets in {base_models_dir}...")
         
-        print(f"Loaded {count} models from {models_dir}")
+        # Look for subdirectories (Model Sets)
+        for entry in os.listdir(base_models_dir):
+            model_set_path = os.path.join(base_models_dir, entry)
+            if os.path.isdir(model_set_path):
+                model_name = entry
+                print(f"Found model set: {model_name}")
+                
+                # Load .ckpt files in this set
+                for filename in os.listdir(model_set_path):
+                    if filename.endswith(".ckpt"):
+                        angle_id = os.path.splitext(filename)[0]
+                        ckpt_path = os.path.join(model_set_path, filename)
+                        try:
+                            self.load_model(model_name, angle_id, ckpt_path)
+                        except Exception as e:
+                            print(f"Failed to load angle '{angle_id}' for set '{model_name}': {e}")
 
-    def get_model(self, name: Optional[str] = None) -> JerryScanPadimModel:
+        print(f"Loaded {len(self.models)} model sets: {list(self.models.keys())}")
+
+    def get_model_names(self) -> List[str]:
+        """Returns list of available model sets."""
+        return sorted(list(self.models.keys()))
+
+    def get_model(self, angle_id: str, model_name: Optional[str] = None) -> JerryScanPadimModel:
         """
-        Retrieves a model by name.
+        Retrieves a model for a specific angle from a specific model set.
+        If model_name is None, it tries to fall back to the first available set.
         """
-        print(name)
-        if name is None:
-             # If no name provided, try 'default' or fall back to single model
-             if "default" in self.models:
-                 return self.models["default"]
-             if len(self.models) == 1:
-                 return next(iter(self.models.values()))
-             if len(self.models) > 0:
-                 # If multiple models exist but none requested, return the first one?
-                 # Or raise error to be specific.
-                 return next(iter(self.models.values()))
-             
-             raise KeyError("No models loaded.")
+        if not self.models:
+            raise KeyError("No models loaded in the system.")
+
+        # Determine which model set to use
+        target_set = model_name
+        if target_set is None:
+            # Fallback: Use the first one alphabetically or just the first in dict
+            target_set = self.get_model_names()[0]
+
+        if target_set not in self.models:
+            raise KeyError(f"Model set '{target_set}' not found.")
         
-        if name not in self.models:
-            raise KeyError(f"Model '{name}' not found.")
+        if angle_id not in self.models[target_set]:
+            raise KeyError(f"Angle '{angle_id}' not found in model set '{target_set}'.")
         
-        return self.models[name]
+        return self.models[target_set][angle_id]

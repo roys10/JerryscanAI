@@ -29,48 +29,40 @@ async def load_models():
     project_root = os.path.dirname(base_dir)
     models_dir = os.path.join(project_root, "models")
     
-    # 1. Try loading from 'models/' directory (Preferred)
+    # Hierarchical loading from 'models/' directory
     if os.path.exists(models_dir):
         print(f"Scanning models directory: {models_dir}")
         model_manager.load_all_models(models_dir)
 
-    # 2. Fallback: Try 'model.ckpt' in root/backend (Legacy/Single File)
     if not model_manager.models:
-        legacy_paths = [
-            os.path.join(base_dir, "model.ckpt"),
-            os.path.join(project_root, "model.ckpt")
-        ]
-        for path in legacy_paths:
-            if os.path.exists(path):
-                try:
-                    model_manager.load_model("default", path)
-                    print(f"Loaded legacy default model from {path}")
-                    break
-                except Exception as e:
-                    print(f"Failed to load legacy model: {e}")
-        
-        if not model_manager.models:
-            print("\n" + "="*60)
-            print("CRITICAL WARNING: MANUAL ACTION REQUIRED")
-            print("="*60)
-            print(f"No models found in {models_dir} or root.")
-            print("Please COPY .ckpt files to 'models/' folder.")
-            print("="*60 + "\n")
+        print("\n" + "="*60)
+        print("CRITICAL WARNING: MANUAL ACTION REQUIRED")
+        print("="*60)
+        print(f"No model folders found in {models_dir}.")
+        print("Please CREATE a subfolder in 'models/' and COPY .ckpt files there.")
+        print("Example: models/Standard/front.ckpt")
+        print("="*60 + "\n")
+
+@app.get("/models")
+async def get_models():
+    """Returns list of available model sets (folder names)."""
+    return model_manager.get_model_names()
 
 @app.post("/inspect/{angle_id}")
-async def inspect_image(angle_id: str, file: UploadFile = File(...)):
-    print(f"Inspecting angle: {angle_id}")
+async def inspect_image(angle_id: str, file: UploadFile = File(...), model_name: Optional[str] = None):
+    print(f"Inspecting angle: {angle_id} using model set: {model_name or 'default'}")
     try:
         if not model_manager.models:
              raise HTTPException(status_code=503, detail="System not ready. No models loaded.")
 
         contents = await file.read()
         try:
-            model = model_manager.get_model(angle_id)
+            model = model_manager.get_model(angle_id, model_name=model_name)
             return model.predict(contents)
-        except KeyError:
+        except KeyError as e:
             return {
                 "status": "UNAVAILABLE",
+                "message": str(e),
                 "score": 0.0,
                 "score_percentage": 0.0,
                 "heatmap_image": None,
@@ -85,6 +77,7 @@ async def inspect_image(angle_id: str, file: UploadFile = File(...)):
 
 @app.post("/inspect-batch")
 async def inspect_batch(
+    model_name: Optional[str] = None,
     front: Optional[UploadFile] = File(None),
     back: Optional[UploadFile] = File(None),
     side_l: Optional[UploadFile] = File(None),
@@ -101,7 +94,7 @@ async def inspect_batch(
         if file:
             contents = await file.read()
             try:
-                model = model_manager.get_model(angle_id)
+                model = model_manager.get_model(angle_id, model_name=model_name)
                 res = model.predict(contents)
                 results[angle_id] = res
                 if res.get("status") == "FAIL":
@@ -112,7 +105,7 @@ async def inspect_batch(
     if not results:
         raise HTTPException(status_code=400, detail="No images provided")
 
-    session_id = history_manager.save_session(results, overall_status)
+    session_id = history_manager.save_session(results, overall_status, model_name=model_name)
     return {"session_id": session_id, "overall_status": overall_status, "angles": results}
 
 @app.get("/history")
@@ -124,7 +117,7 @@ async def get_stats():
     return history_manager.get_stats()
 
 @app.post("/simulate-trigger")
-async def simulate_trigger():
+async def simulate_trigger(model_name: Optional[str] = None):
     import random
     # Logic to pick a random subfolder in test_images/
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -155,7 +148,7 @@ async def simulate_trigger():
             with open(img_path, "rb") as f:
                 contents = f.read()
                 try:
-                    model = model_manager.get_model(angle_id)
+                    model = model_manager.get_model(angle_id, model_name=model_name)
                     res = model.predict(contents)
                     results[angle_id] = res
                     if res.get("status") == "FAIL":
@@ -165,12 +158,16 @@ async def simulate_trigger():
         else:
              results[angle_id] = {"status": "MISSING", "score": 0}
 
-    session_id = history_manager.save_session(results, overall_status)
-    return {"folder": chosen_folder, "session_id": session_id, "overall_status": overall_status, "angles": results}
+    session_id = history_manager.save_session(results, overall_status, model_name=model_name)
+    return {"folder": chosen_folder, "session_id": session_id, "overall_status": overall_status, "angles": results, "model_name": model_name}
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "models_loaded": list(model_manager.models.keys())}
+    return {
+        "status": "ok", 
+        "model_sets": model_manager.get_model_names(),
+        "details": {name: list(angles.keys()) for name, angles in model_manager.models.items()}
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

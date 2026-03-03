@@ -17,7 +17,7 @@ class HistoryManager:
             with open(self.history_path, 'w') as f:
                 json.dump([], f)
 
-    def save_session(self, angles_results: Dict[str, Dict], overall_status: str) -> str:
+    def save_session(self, angles_results: Dict[str, Dict], overall_status: str, model_name: Optional[str] = None) -> str:
         """
         Saves a full Jerrycan inspection session.
         """
@@ -26,6 +26,7 @@ class HistoryManager:
             "id": session_id,
             "timestamp": datetime.now().isoformat(),
             "overall_status": overall_status,
+            "model_name": model_name,
             "angles": angles_results
         }
 
