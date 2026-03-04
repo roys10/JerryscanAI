@@ -125,7 +125,8 @@ class JerryScanPadimModel:
         if min_val is not None and max_val is not None:
              norm_score = (pred_score - min_val) / (max_val - min_val + 1e-6)
         else:
-             norm_score = min(pred_score, 1.0)
+             sys_min, sys_max = anomaly_map.min(), anomaly_map.max()
+             norm_score = (pred_score - sys_min) / (sys_max - sys_min + 1e-6)
         
         score_percentage = float(np.clip(norm_score, 0, 1) * 100)
         threshold_percentage = float(threshold * 100)

@@ -5,13 +5,18 @@ An AI-powered surface defect detection system using Anomalib (Padim).
 ## 🚀 Deployment Instructions
 
 ### 1. Backend Setup
-1.  Navigate to `backend/`:
+1.  **Install `uv`** (if not already installed):
     ```bash
-    cd backend
+    # Windows
+    irm https://astral.sh/uv/install.ps1 | iex
+    
+    # macOS/Linux
+    curl -LsSf https://astral.sh/uv/install.sh | sh
     ```
-2.  Install dependencies:
+2.  **Sync dependencies & Start Server** (from the project root):
     ```bash
-    pip install -r requirements.txt
+    uv sync
+    uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
     ```
 3.  **IMPORTANT: Model Deployment**
     The model file (`model.ckpt`) is too large for Git and is ignored.
@@ -22,10 +27,7 @@ An AI-powered surface defect detection system using Anomalib (Padim).
     ├── frontend/
     └── model.ckpt  <-- PLACE HERE
     ```
-4.  Run the server:
-    ```bash
-    python main.py
-    ```
+    Server runs at `http://localhost:8000`.
     Server runs at `http://localhost:8000`.
 
 ### 2. Frontend Setup
