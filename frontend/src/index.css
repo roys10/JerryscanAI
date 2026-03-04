@@ -1,0 +1,49 @@
+:root {
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  /* Industrial Light Theme */
+  color-scheme: light;
+  color: #1f2937;
+  /* Slate 800 */
+  background-color: #f3f4f6;
+  /* Slate 100 - Industrial Grey Background */
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Palette: Industrial Green & White */
+  --primary-color: #10b981;
+  /* Emerald 500 */
+  --primary-hover: #059669;
+  /* Emerald 600 */
+  --secondary-color: #ef4444;
+  /* Red 500 */
+
+  --bg-card: #ffffff;
+  /* White */
+  --bg-app: #f3f4f6;
+  /* Slate 100 */
+  --text-main: #111827;
+  /* Gray 900 */
+  --text-muted: #6b7280;
+  /* Gray 500 */
+  --border-color: #e5e7eb;
+  /* Gray 200 */
+}
+
+body {
+  margin: 0;
+  display: block;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--bg-app);
+}
+
+#root {
+  width: 100%;
+  padding: 0;
+}

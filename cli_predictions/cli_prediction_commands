@@ -1,0 +1,1 @@
+anomalib predict --model Padim --data cli_predictions\synthetic_fault_G01-251224-094208-433.bmp --ckpt_path results\Padim\jerryscan_singleangle\latest\weights\lightning\model.ckpt
