@@ -4,6 +4,8 @@ import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, Refr
 import './Inspection.css';
 import './History.css';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 function App() {
   // Navigation
   const [activePage, setActivePage] = useState('console'); // 'console' or 'history'
@@ -53,7 +55,7 @@ function App() {
 
   const fetchModels = async () => {
     try {
-      const response = await axios.get('http://localhost:8000/models');
+      const response = await axios.get(`${API_BASE_URL}/models`);
       setAvailableModels(response.data);
       if (response.data.length > 0 && !selectedModel) {
         setSelectedModel(response.data[0]);
@@ -66,8 +68,8 @@ function App() {
   const fetchHistory = async () => {
     try {
       const url = filter === 'all'
-        ? 'http://localhost:8000/history'
-        : `http://localhost:8000/history?status=${filter}`;
+        ? `${API_BASE_URL}/history`
+        : `${API_BASE_URL}/history?status=${filter}`;
       const response = await axios.get(url);
       setHistory(response.data);
     } catch (err) {
@@ -77,7 +79,7 @@ function App() {
 
   const fetchStats = async () => {
     try {
-      const response = await axios.get('http://localhost:8000/stats');
+      const response = await axios.get(`${API_BASE_URL}/history/stats`);
       setStats(response.data);
     } catch (err) {
       console.error("Failed to fetch stats:", err);
@@ -87,7 +89,7 @@ function App() {
   const simulateTrigger = async () => {
     setLoading(true);
     try {
-      const response = await axios.post(`http://localhost:8000/simulate-trigger?model_name=${selectedModel}`);
+      const response = await axios.post(`${API_BASE_URL}/simulate-trigger?model_name=${selectedModel}`);
       // After simulation, maybe show the result in the console? 
       // For now, let's just refresh history if we are there.
       if (activePage === 'history') {
@@ -171,7 +173,7 @@ function App() {
     });
 
     try {
-      const response = await axios.post(`http://localhost:8000/inspect-batch?model_name=${selectedModel}`, formData, {
+      const response = await axios.post(`${API_BASE_URL}/inspect-batch?model_name=${selectedModel}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
