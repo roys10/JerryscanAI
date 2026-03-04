@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, RefreshCw, History, LayoutDashboard, Search, Filter } from 'lucide-react';
+import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, RefreshCw, History, LayoutDashboard, Search, Filter, Settings, Bell } from 'lucide-react';
 import './Inspection.css';
 import './History.css';
 
@@ -11,6 +11,21 @@ function App() {
   const [activePage, setActivePage] = useState('console'); // 'console' or 'history'
   const [isArchiveView, setIsArchiveView] = useState(false);
   const [selectedSession, setSelectedSession] = useState(null);
+
+  // Settings State
+  const [systemSettings, setSystemSettings] = useState({
+    alert_threshold: 3,
+    alert_email_address: '',
+    alert_webhook_url: '',
+    smtp_server: 'smtp.gmail.com',
+    smtp_port: 587,
+    smtp_user: '',
+    smtp_password: '',
+    alert_pass_rate_threshold: 90,
+    alert_pass_rate_window: 50
+  });
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [settingsLoading, setSettingsLoading] = useState(false);
 
   // Console State
   const [angleData, setAngleData] = useState({});
@@ -47,11 +62,35 @@ function App() {
 
   useEffect(() => {
     fetchModels();
+    fetchSettings();
     if (activePage === 'history') {
       fetchHistory();
       fetchStats();
     }
   }, [activePage, filter]);
+
+  const fetchSettings = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/settings`);
+      setSystemSettings(response.data);
+    } catch (err) {
+      console.error("Failed to fetch settings:", err);
+    }
+  };
+
+  const saveSettings = async (e) => {
+    if (e) e.preventDefault();
+    setSettingsLoading(true);
+    try {
+      const response = await axios.post(`${API_BASE_URL}/settings`, systemSettings);
+      setSystemSettings(response.data.settings);
+    } catch (err) {
+      console.error("Failed to save settings:", err);
+      alert("Failed to save settings.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
 
   const fetchModels = async () => {
     try {
@@ -79,7 +118,7 @@ function App() {
 
   const fetchStats = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/history/stats`);
+      const response = await axios.get(`${API_BASE_URL}/stats`);
       setStats(response.data);
     } catch (err) {
       console.error("Failed to fetch stats:", err);
@@ -237,6 +276,16 @@ function App() {
           >
             <History size={18} /> History & Analytics
           </div>
+          <div
+            className={`nav-item ${activePage === 'alerts' && !isArchiveView ? 'active' : ''}`}
+            onClick={() => {
+              setActivePage('alerts');
+              setIsArchiveView(false);
+              setSelectedSession(null);
+            }}
+          >
+            <Bell size={18} /> System Alerts
+          </div>
         </div>
         <div className="navbar-right" style={{ display: 'flex', alignItems: 'center' }}>
           <div style={{ width: '1px', height: '24px', background: '#334155', marginRight: '1.5rem' }} />
@@ -256,7 +305,7 @@ function App() {
               style={{ marginRight: '-0.5rem' }}
             >
               {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-              Simulate Trigger
+              Simulation Trigger
             </button>
           )}
         </div>
@@ -551,12 +600,76 @@ function App() {
   );
 
 
+  const renderAlerts = () => (
+    <div className="history-container">
+      <div className="card" style={{ maxWidth: '800px', margin: '0 auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
+          <h2 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Bell size={20} /> System Alerts Configuration</h2>
+        </div>
+
+        <form onSubmit={saveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
+            <div className="form-group">
+              <label>Failure Threshold</label>
+              <input type="number" min="1" max="100" value={systemSettings.alert_threshold} onChange={(e) => setSystemSettings({ ...systemSettings, alert_threshold: parseInt(e.target.value) || 3 })} required className="modal-input" />
+              <small>Consecutive fails to trigger.</small>
+            </div>
+            <div className="form-group">
+              <label>Min. Pass Rate Threshold (%)</label>
+              <input type="number" min="1" max="100" value={systemSettings.alert_pass_rate_threshold} onChange={(e) => setSystemSettings({ ...systemSettings, alert_pass_rate_threshold: parseInt(e.target.value) || 90 })} required className="modal-input" />
+              <small>Alert if pass rate drops below this %.</small>
+            </div>
+            <div className="form-group">
+              <label>Pass Rate Window (Samples)</label>
+              <input type="number" min="5" max="1000" value={systemSettings.alert_pass_rate_window} onChange={(e) => setSystemSettings({ ...systemSettings, alert_pass_rate_window: parseInt(e.target.value) || 50 })} required className="modal-input" />
+              <small>Number of recent items to calculate rate.</small>
+            </div>
+            <div className="form-group">
+              <label>Email Address</label>
+              <input type="email" placeholder="Optional" value={systemSettings.alert_email_address} onChange={(e) => setSystemSettings({ ...systemSettings, alert_email_address: e.target.value })} className="modal-input" />
+              <small>Target for all alert types.</small>
+            </div>
+            <div className="form-group">
+              <label>Webhook URL</label>
+              <input type="url" placeholder="Optional" value={systemSettings.alert_webhook_url} onChange={(e) => setSystemSettings({ ...systemSettings, alert_webhook_url: e.target.value })} className="modal-input" />
+              <small>Target for all alert types.</small>
+            </div>
+          </div>
+
+          <div onClick={() => setShowAdvancedSettings(!showAdvancedSettings)} style={{ cursor: 'pointer', color: 'var(--primary-color)', fontSize: '0.9rem', fontWeight: 600, marginTop: '0.5rem' }}>
+            {showAdvancedSettings ? '▼ Hide SMTP Configuration (Email)' : '▶ Show SMTP Configuration (Email)'}
+          </div>
+
+          {showAdvancedSettings && (
+            <div style={{ background: 'var(--bg-app)', padding: '1rem', borderRadius: '0.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="form-group"><label>SMTP Server</label><input type="text" value={systemSettings.smtp_server} onChange={(e) => setSystemSettings({ ...systemSettings, smtp_server: e.target.value })} className="modal-input" /></div>
+                <div className="form-group"><label>SMTP Port</label><input type="number" value={systemSettings.smtp_port} onChange={(e) => setSystemSettings({ ...systemSettings, smtp_port: parseInt(e.target.value) || 587 })} className="modal-input" /></div>
+              </div>
+              <div className="form-group"><label>SMTP User (Sender)</label><input type="text" value={systemSettings.smtp_user} onChange={(e) => setSystemSettings({ ...systemSettings, smtp_user: e.target.value })} className="modal-input" /></div>
+              <div className="form-group"><label>SMTP App Password</label><input type="password" value={systemSettings.smtp_password} onChange={(e) => setSystemSettings({ ...systemSettings, smtp_password: e.target.value })} className="modal-input" /></div>
+            </div>
+          )}
+
+          <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+            <button type="submit" disabled={settingsLoading} className="btn-primary" style={{ width: 'auto', padding: '0.75rem 2rem' }}>
+              {settingsLoading ? <Loader2 className="spin" size={18} /> : 'Save Settings'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
+
   return (
     <div className="app-root">
       {renderNavbar()}
 
       <div className="inspection-container">
-        {activePage === 'console' ? renderConsole() : renderHistory()}
+        {activePage === 'console' && renderConsole()}
+        {activePage === 'history' && renderHistory()}
+        {activePage === 'alerts' && renderAlerts()}
       </div>
     </div>
   );

@@ -3,9 +3,11 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from inference.manager import JerryScanModelManager
 from inference.history import HistoryManager
+from inference.config import ConfigManager
+from inference.alerts import AlertManager
 import os
 import uvicorn
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 app = FastAPI(title="JerryscanAI Backend")
 
@@ -21,6 +23,8 @@ app.add_middleware(
 # Managers
 model_manager = JerryScanModelManager()
 history_manager = HistoryManager()
+config_manager = ConfigManager()
+alert_manager = AlertManager(config_manager, history_manager)
 
 @app.on_event("startup")
 async def load_models():
@@ -106,7 +110,17 @@ async def inspect_batch(
         raise HTTPException(status_code=400, detail="No images provided")
 
     session_id = history_manager.save_session(results, overall_status, model_name=model_name)
+    alert_manager.evaluate_session(overall_status, session_id)
     return {"session_id": session_id, "overall_status": overall_status, "angles": results}
+
+@app.get("/settings")
+async def get_settings():
+    return config_manager.get_all()
+
+@app.post("/settings")
+async def update_settings(settings: Dict[str, Any]):
+    updated = config_manager.update(settings)
+    return {"status": "success", "settings": updated}
 
 @app.get("/history")
 async def get_history(status: Optional[str] = None):
@@ -118,8 +132,7 @@ async def get_stats():
 
 @app.post("/simulate-trigger")
 async def simulate_trigger(model_name: Optional[str] = None):
-    import random
-    # Logic to pick a random subfolder in test_images/
+    # Logic to process ALL subfolders in test_images/
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     test_dir = os.path.join(base_dir, "test_images")
     
@@ -130,36 +143,58 @@ async def simulate_trigger(model_name: Optional[str] = None):
     if not subdirs:
         raise HTTPException(status_code=404, detail="No test folders found in test_images")
         
-    chosen_folder = random.choice(subdirs)
-    folder_path = os.path.join(test_dir, chosen_folder)
-    
-    results = {}
-    overall_status = "PASS"
-    
-    for angle_id in ["front", "back", "side_l", "side_r"]:
-        img_path = None
-        for ext in [".jpg", ".png", ".jpeg"]:
-            p = os.path.join(folder_path, f"{angle_id}{ext}")
-            if os.path.exists(p):
-                img_path = p
-                break
-        
-        if img_path:
-            with open(img_path, "rb") as f:
-                contents = f.read()
-                try:
-                    model = model_manager.get_model(angle_id, model_name=model_name)
-                    res = model.predict(contents)
-                    results[angle_id] = res
-                    if res.get("status") == "FAIL":
-                        overall_status = "FAIL"
-                except KeyError:
-                    results[angle_id] = {"status": "UNAVAILABLE", "score": 0}
-        else:
-             results[angle_id] = {"status": "MISSING", "score": 0}
+    all_sessions_results = []
+    global_batch_status = "PASS"
 
-    session_id = history_manager.save_session(results, overall_status, model_name=model_name)
-    return {"folder": chosen_folder, "session_id": session_id, "overall_status": overall_status, "angles": results, "model_name": model_name}
+    for chosen_folder in subdirs:
+        folder_path = os.path.join(test_dir, chosen_folder)
+        results = {}
+        overall_status = "PASS"
+        
+        for angle_id in ["front", "back", "side_l", "side_r"]:
+            img_path = None
+            for ext in [".jpg", ".png", ".jpeg"]:
+                p = os.path.join(folder_path, f"{angle_id}{ext}")
+                if os.path.exists(p):
+                    img_path = p
+                    break
+            
+            if img_path:
+                with open(img_path, "rb") as f:
+                    contents = f.read()
+                    try:
+                        model = model_manager.get_model(angle_id, model_name=model_name)
+                        res = model.predict(contents)
+                        results[angle_id] = res
+                        if res.get("status") == "FAIL":
+                            overall_status = "FAIL"
+                    except KeyError:
+                        results[angle_id] = {"status": "UNAVAILABLE", "score": 0}
+            else:
+                 results[angle_id] = {"status": "MISSING", "score": 0}
+
+        session_id = history_manager.save_session(results, overall_status, model_name=model_name)
+        alert_manager.evaluate_session(overall_status, session_id)
+        
+        if overall_status == "FAIL":
+            global_batch_status = "FAIL"
+
+        all_sessions_results.append({
+            "folder": chosen_folder, 
+            "session_id": session_id, 
+            "overall_status": overall_status, 
+            "angles": results, 
+            "model_name": model_name
+        })
+
+    # the frontend expects an object with overall_status and angles (results dict)
+    # We will map the very last result as the "live console" result, but all will be in history
+    final_session = all_sessions_results[-1]
+    return {
+        "overall_status": global_batch_status,
+        "angles": final_session["angles"],
+        "batch_processed": len(all_sessions_results)
+    }
 
 @app.get("/health")
 def health_check():
