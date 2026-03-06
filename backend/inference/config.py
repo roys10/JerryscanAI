@@ -12,15 +12,23 @@ class ConfigManager:
         
         # Default configuration
         self.default_config = {
-            "alert_threshold": 3,
-            "alert_email_address": "",
-            "alert_webhook_url": "",
-            "smtp_server": "smtp.gmail.com",
-            "smtp_port": 587,
-            "smtp_user": "",
-            "smtp_password": "",
-            "alert_pass_rate_threshold": 90,
-            "alert_pass_rate_window": 50
+            "smtp": {
+                "server": "smtp.gmail.com",
+                "port": 587,
+                "user": "",
+                "password": ""
+            },
+            "alerts": [
+                {
+                    "id": "default-streak",
+                    "name": "Failure Streak",
+                    "type": "consecutive_fails",
+                    "threshold": 3,
+                    "emails": [],
+                    "webhook_url": "",
+                    "enabled": True
+                }
+            ]
         }
         
         self.config = self._load()
@@ -34,7 +42,7 @@ class ConfigManager:
         try:
             with open(self.config_path, 'r') as f:
                 data = json.load(f)
-                # Merge with defaults to ensure all keys exist
+                # For a professional system, we merge keys but prioritizing user data
                 merged = self.default_config.copy()
                 merged.update(data)
                 return merged
@@ -59,10 +67,8 @@ class ConfigManager:
         return self.config.get(key, default)
 
     def update(self, new_settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Updates multiple settings and persists them to disk."""
-        for key, value in new_settings.items():
-            if key in self.default_config:
-                self.config[key] = value
-        
+        """Updates settings and persists them to disk."""
+        # Update our in-memory config with whatever the frontend sent
+        self.config.update(new_settings)
         self._save(self.config)
         return self.config

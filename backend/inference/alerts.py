@@ -10,110 +10,122 @@ class AlertManager:
     def __init__(self, config_manager: ConfigManager, history_manager=None):
         self.config = config_manager
         self.history_manager = history_manager
-        self.consecutive_failures = 0
-        self.alert_sent_for_current_streak = False
-        self.pass_rate_alert_active = False
+        
+        # In-memory tracking for rule states (streaks, active alerts)
+        # Format: { rule_id: { "streak": int, "alert_active": bool } }
+        self.rule_states = {}
+
+    def _get_rule_state(self, rule_id: str):
+        if rule_id not in self.rule_states:
+            self.rule_states[rule_id] = {"streak": 0, "alert_active": False}
+        return self.rule_states[rule_id]
 
     def evaluate_session(self, overall_status: str, session_id: str):
-        """Processes a new inspection result."""
+        """Processes a new inspection result against all active rules."""
+        rules = self.config.get("alerts", [])
         
-        # 1. Handle Consecutive Failures
-        if overall_status == "FAIL":
-            self.consecutive_failures += 1
-            print(f"[AlertManager] Failure {self.consecutive_failures} recorded for session {session_id}.")
+        for rule in rules:
+            if not rule.get("enabled", True):
+                continue
             
-            threshold = int(self.config.get("alert_threshold", 3))
+            rule_id = rule.get("id")
+            rule_type = rule.get("type")
+            state = self._get_rule_state(rule_id)
             
-            if self.consecutive_failures >= threshold and not self.alert_sent_for_current_streak:
-                print(f"[AlertManager] Streak Threshold ({threshold}) reached! Triggering alerts...")
-                self.trigger_streak_alert(session_id, self.consecutive_failures)
-                self.alert_sent_for_current_streak = True
-                
-        elif overall_status == "PASS":
-            if self.consecutive_failures > 0:
-                print(f"[AlertManager] System recovered. Resetting failure streak (was {self.consecutive_failures}).")
-            self.consecutive_failures = 0
-            self.alert_sent_for_current_streak = False
+            # --- EVALUATE RULE ---
+            triggered = False
+            details = ""
 
-        # 2. Handle Pass Rate Threshold
-        if self.history_manager:
-            window = int(self.config.get("alert_pass_rate_window", 50))
-            threshold = float(self.config.get("alert_pass_rate_threshold", 90))
-            
-            # Fetch recent history
-            recent = self.history_manager.get_history(limit=window)
-            if len(recent) >= 5: # Minimum sample size to avoid jitter
-                passes = len([s for s in recent if s["overall_status"] == "PASS"])
-                current_rate = (passes / len(recent)) * 100
-                
-                if current_rate < threshold:
-                    if not self.pass_rate_alert_active:
-                        print(f"[AlertManager] Pass Rate Drop! {current_rate:.1f}% < {threshold}% (Window: {len(recent)})")
-                        self.trigger_pass_rate_alert(current_rate, threshold, len(recent))
-                        self.pass_rate_alert_active = True
+            if rule_type == "consecutive_fails":
+                if overall_status == "FAIL":
+                    state["streak"] += 1
+                    threshold = int(rule.get("threshold", 3))
+                    if state["streak"] >= threshold and not state["alert_active"]:
+                        triggered = True
+                        details = f"{state['streak']} consecutive failures detected."
                 else:
-                    if self.pass_rate_alert_active:
-                        print(f"[AlertManager] Pass Rate recovered to {current_rate:.1f}%.")
-                    self.pass_rate_alert_active = False
+                    state["streak"] = 0
+                    state["alert_active"] = False # Recovered
 
-    def trigger_streak_alert(self, session_id: str, count: int):
-        """Dispatches streak-based alerts."""
-        subject = f"🚨 JerryScan AI: {count} Consecutive Failures!"
-        body = f"The visual inspection system has detected {count} consecutive defective products.\n\nLatest Session ID: {session_id}\nPlease check the production line immediately."
-        self._dispatch(subject, body)
-
-    def trigger_pass_rate_alert(self, current_rate: float, threshold: float, window: int):
-        """Dispatches pass-rate-based alerts."""
-        subject = f"⚠️ JerryScan AI: Pass Rate Drop ({current_rate:.1f}%)"
-        body = f"The rolling pass rate has dropped below your threshold of {threshold}%.\n\nCurrent Rate: {current_rate:.1f}%\nWindow Size: {window} samples\n\nQuality may be degrading. Please investigate."
-        self._dispatch(subject, body)
-
-    def _dispatch(self, subject: str, body: str):
-        """Internal helper to send to all channels."""
-        # 1. Email
-        target_email = self.config.get("alert_email_address")
-        if target_email: self._send_email(target_email, subject, body)
+            elif rule_type == "pass_rate" and self.history_manager:
+                window = int(rule.get("window", 50))
+                threshold = float(rule.get("threshold", 90))
+                
+                recent = self.history_manager.get_history(limit=window)
+                if len(recent) >= 5: # Min samples to avoid noise
+                    passes = len([s for s in recent if s["overall_status"] == "PASS"])
+                    rate = (passes / len(recent)) * 100
+                    
+                    if rate < threshold:
+                        if not state["alert_active"]:
+                            triggered = True
+                            details = f"Pass rate dropped to {rate:.1f}% (Threshold: {threshold}%, Window: {len(recent)})."
+                    else:
+                        state["alert_active"] = False # Recovered
             
-        # 2. Webhook
-        webhook_url = self.config.get("alert_webhook_url")
-        if webhook_url: self._send_webhook(webhook_url, subject, body)
+            # --- DISPATCH IF TRIGGERED ---
+            if triggered:
+                print(f"[AlertManager] Rule '{rule.get('name')}' triggered!")
+                self._dispatch_rule_alert(rule, session_id, details)
+                state["alert_active"] = True
 
-    def _send_email(self, to_email: str, subject: str, body: str):
+    def _dispatch_rule_alert(self, rule: dict, session_id: str, details: str):
+        """Dispatches alerts for a specific rule."""
+        rule_name = rule.get("name", "Unnamed Alert")
+        subject = f"🚨 JerryScan AI Alert: {rule_name}"
+        body = (
+            f"Alert Rule triggered: {rule_name}\n"
+            f"Condition Details: {details}\n\n"
+            f"Latest Session: {session_id}\n\n"
+            f"Please check the production line."
+        )
+        
+        # Multiple Email Recipients
+        recipients = rule.get("emails", [])
+        if recipients:
+            self._send_email(recipients, subject, body)
+            
+        # Rule-specific Webhook
+        webhook_url = rule.get("webhook_url")
+        if webhook_url:
+            self._send_webhook(webhook_url, subject, body)
+
+    def _send_email(self, recipients: list, subject: str, body: str):
         try:
-            smtp_server = self.config.get("smtp_server")
-            smtp_port = int(self.config.get("smtp_port"))
-            smtp_user = self.config.get("smtp_user")
-            smtp_password = self.config.get("smtp_password")
+            smtp_cfg = self.config.get("smtp", {})
+            server_host = smtp_cfg.get("server")
+            server_port = int(smtp_cfg.get("port", 587))
+            user = smtp_cfg.get("user")
+            password = smtp_cfg.get("password")
 
-            if not all([smtp_server, smtp_port, smtp_user, smtp_password]):
-                print("[AlertManager] SMTP configuration incomplete. Skipping email alert.")
+            if not all([server_host, server_port, user, password]):
+                print("[AlertManager] SMTP settings incomplete.")
                 return
 
             msg = EmailMessage()
             msg.set_content(body)
             msg['Subject'] = subject
-            msg['From'] = smtp_user
-            msg['To'] = to_email
+            msg['From'] = user
+            msg['To'] = ", ".join(recipients)
 
-            if smtp_port == 465:
+            if server_port == 465:
                 context = ssl.create_default_context()
-                with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context) as server:
-                    server.login(smtp_user, smtp_password)
+                with smtplib.SMTP_SSL(server_host, server_port, context=context) as server:
+                    server.login(user, password)
                     server.send_message(msg)
             else:
-                with smtplib.SMTP(smtp_server, smtp_port) as server:
+                with smtplib.SMTP(server_host, server_port) as server:
                     server.starttls()
-                    server.login(smtp_user, smtp_password)
+                    server.login(user, password)
                     server.send_message(msg)
-            print("[AlertManager] Email sent successfully.")
+            print(f"[AlertManager] Email sent to {len(recipients)} recipients.")
         except Exception as e:
-            print(f"[AlertManager] Failed to send email: {e}")
+            print(f"[AlertManager] Email Error: {e}")
 
     def _send_webhook(self, url: str, subject: str, body: str):
         try:
             payload = {"text": f"*{subject}*\n{body}", "subject": subject, "body": body}
-            response = requests.post(url, json=payload, timeout=5)
-            response.raise_for_status()
-            print("[AlertManager] Webhook dispatched successfully.")
+            requests.post(url, json=payload, timeout=5).raise_for_status()
+            print("[AlertManager] Webhook dispatched.")
         except Exception as e:
-            print(f"[AlertManager] Failed to dispatch webhook: {e}")
+            print(f"[AlertManager] Webhook Error: {e}")
