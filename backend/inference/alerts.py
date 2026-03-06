@@ -32,7 +32,7 @@ class AlertManager:
             rule_type = rule.get("type")
             state = self._get_rule_state(rule_id)
             
-            # --- EVALUATE RULE ---
+            # Evaluation Logic
             triggered = False
             details = ""
 
@@ -63,7 +63,7 @@ class AlertManager:
                     else:
                         state["alert_active"] = False # Recovered
             
-            # --- DISPATCH IF TRIGGERED ---
+            # Dispatching
             if triggered:
                 print(f"[AlertManager] Rule '{rule.get('name')}' triggered!")
                 self._dispatch_rule_alert(rule, session_id, details)

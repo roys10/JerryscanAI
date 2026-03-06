@@ -129,8 +129,6 @@ function App() {
     setLoading(true);
     try {
       const response = await axios.post(`${API_BASE_URL}/simulate-trigger?model_name=${selectedModel}`);
-      // After simulation, maybe show the result in the console? 
-      // For now, let's just refresh history if we are there.
       if (activePage === 'history') {
         fetchHistory();
         fetchStats();
@@ -141,7 +139,7 @@ function App() {
           if (response.data.angles[a.id]) {
             simData[a.id] = {
               result: response.data.angles[a.id],
-              previewUrl: response.data.angles[a.id].original_image // If backend returns it
+              previewUrl: response.data.angles[a.id].original_image
             };
           }
         });
@@ -553,7 +551,6 @@ function App() {
           <tbody>
             {history.map(session => (
               <tr key={session.id} onClick={() => {
-                // Properly map the historical results into the state structure
                 const mappedData = {};
                 Object.keys(session.angles).forEach(id => {
                   mappedData[id] = {

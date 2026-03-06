@@ -35,8 +35,6 @@ class JerryScanPadimModel:
     def predict(self, image_bytes: bytes) -> dict:
         # 1. Decode Image (PIL - Matches Training)
         try:
-             import io
-             from PIL import Image
              # Load as RGB (Standard for Torchvision)
              image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
              

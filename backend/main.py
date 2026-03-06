@@ -54,7 +54,6 @@ async def get_models():
 
 @app.post("/inspect/{angle_id}")
 async def inspect_image(angle_id: str, file: UploadFile = File(...), model_name: Optional[str] = None):
-    print(f"Inspecting angle: {angle_id} using model set: {model_name or 'default'}")
     try:
         if not model_manager.models:
              raise HTTPException(status_code=503, detail="System not ready. No models loaded.")
