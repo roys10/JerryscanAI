@@ -31,7 +31,8 @@ A professional AI-powered surface defect detection system built with **FastAPI**
     ```
 4.  **Start Server**:
     ```bash
-    uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    cd backend
+    python .\main.py
     ```
 
 ### 2. Frontend Setup
@@ -41,10 +42,8 @@ A professional AI-powered surface defect detection system built with **FastAPI**
     npm install
     ```
 2.  **Environment Setup**:
-    Create a `.env` file in `frontend/`:
-    ```env
-    VITE_API_URL=http://localhost:8000
-    ```
+    Create a `.env` file in `frontend/` (copy from `.env_templates`)
+
 3.  **Run Development Server**:
     ```bash
     npm run dev
