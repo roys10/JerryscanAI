@@ -19,7 +19,6 @@ class DictDot(dict):
 class JerryScanPadimModel:
     def __init__(self, ckpt_path: str):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Loading Padim model from {ckpt_path}...")
         
         # Load model
         self.model = Padim.load_from_checkpoint(ckpt_path).to(self.device).eval()
@@ -35,8 +34,6 @@ class JerryScanPadimModel:
     def predict(self, image_bytes: bytes) -> dict:
         # 1. Decode Image (PIL - Matches Training)
         try:
-             import io
-             from PIL import Image
              # Load as RGB (Standard for Torchvision)
              image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
              

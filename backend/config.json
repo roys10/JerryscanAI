@@ -1,0 +1,9 @@
+{
+    "alert_threshold": 1,
+    "alert_email_address": "roysegev10@gmail.com",
+    "alert_webhook_url": "",
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "smtp_user": "jerryscan.ai@gmail.com",
+    "smtp_password": "dtzv mzjf acxt tjvd"
+}
