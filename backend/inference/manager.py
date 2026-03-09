@@ -33,14 +33,11 @@ class JerryScanModelManager:
             print(f"Models directory not found at {base_models_dir}")
             return
 
-        print(f"Scanning for model sets in {base_models_dir}...")
-        
         # Look for subdirectories (Model Sets)
         for entry in os.listdir(base_models_dir):
             model_set_path = os.path.join(base_models_dir, entry)
             if os.path.isdir(model_set_path):
                 model_name = entry
-                print(f"Found model set: {model_name}")
                 
                 # Load .ckpt files in this set
                 for filename in os.listdir(model_set_path):
