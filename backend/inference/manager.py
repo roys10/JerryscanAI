@@ -1,15 +1,16 @@
 from typing import Dict, Optional, List
-from .core import JerryScanPadimModel
+from .core import JerryScanAnomalibModel
 import os
 
 class JerryScanModelManager:
     def __init__(self):
-        # Structure: { "model_name": { "angle_id": JerryScanPadimModel } }
-        self.models: Dict[str, Dict[str, JerryScanPadimModel]] = {}
+        # Structure: { "model_name": { "angle_id": JerryScanAnomalibModel } }
+        self.models: Dict[str, Dict[str, JerryScanAnomalibModel]] = {}
 
-    def load_model(self, model_name: str, angle_id: str, path: str, model_type: str = "padim"):
+    def load_model(self, model_name: str, angle_id: str, path: str):
         """
         Loads a single angle model into a specific model set.
+        Architecture is auto-detected from the checkpoint.
         """
         if not os.path.exists(path):
             raise FileNotFoundError(f"Model checkpoint not found at {path}")
@@ -18,10 +19,8 @@ class JerryScanModelManager:
             self.models[model_name] = {}
 
         print(f"Loading model '{model_name}' - '{angle_id}' from {path}...")
-        if model_type == "padim":
-            self.models[model_name][angle_id] = JerryScanPadimModel(path)
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
+        # JerryScanAnomalibModel auto-detects Padim vs PatchCore
+        self.models[model_name][angle_id] = JerryScanAnomalibModel(path)
         
     def load_all_models(self, base_models_dir: str):
         """
@@ -45,6 +44,7 @@ class JerryScanModelManager:
                         angle_id = os.path.splitext(filename)[0]
                         ckpt_path = os.path.join(model_set_path, filename)
                         try:
+                            # Auto-detection happens inside load_model -> JerryScanAnomalibModel
                             self.load_model(model_name, angle_id, ckpt_path)
                         except Exception as e:
                             print(f"Failed to load angle '{angle_id}' for set '{model_name}': {e}")
@@ -55,10 +55,9 @@ class JerryScanModelManager:
         """Returns list of available model sets."""
         return sorted(list(self.models.keys()))
 
-    def get_model(self, angle_id: str, model_name: Optional[str] = None) -> JerryScanPadimModel:
+    def get_model(self, angle_id: str, model_name: Optional[str] = None) -> JerryScanAnomalibModel:
         """
         Retrieves a model for a specific angle from a specific model set.
-        If model_name is None, it tries to fall back to the first available set.
         """
         if not self.models:
             raise KeyError("No models loaded in the system.")
@@ -66,7 +65,6 @@ class JerryScanModelManager:
         # Determine which model set to use
         target_set = model_name
         if target_set is None:
-            # Fallback: Use the first one alphabetically or just the first in dict
             target_set = self.get_model_names()[0]
 
         if target_set not in self.models:
