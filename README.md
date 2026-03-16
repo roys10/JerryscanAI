@@ -49,22 +49,52 @@ A professional AI-powered surface defect detection system built with **FastAPI**
     npm run dev
     ```
 
+---
+
+The **Model Lab** is a dedicated research environment for evaluating new models (Padim/Patchcore) and comparing performance metrics side-by-side.
+
+### Running the Lab
+```bash
+uv run streamlit run model_lab/app.py
+```
+
+### Dataset Setup (`test_dataset/`)
+> [!IMPORTANT]
+> To use the Model Lab, download the `test_dataset` from the **JerryscanAI Google Drive** and place it in the project root.
+
+Organize your test images by camera angle and category:
+```
+test_dataset/
+├── front/
+│   ├── normal/       # Good samples
+│   ├── fault/        # Defective samples
+│   └── ground_truth/ # (Optional) Semantic masks
+├── back/
+│   └── ...
+├── side_l/
+│   └── ...
+└── side_r/
+    └── ...
+```
+
+---
+
 ## 🛠 Features
 
--   **Multi-Angle Batch Inspection**: Supports simultaneous inspection of Front, Back, Side L, and Side R views.
+-   **Multi-Angle Batch Inspection**: Simultaneous inspection of Front, Back, Side L, and Side R views.
 -   **Professional Alerting System**:
-    -   **Custom Rules**: Define alerts based on "Failure Streaks" or "Pass Rate Drops".
-    -   **Multi-Channel**: Supports multiple Email recipients and Generic Webhooks per rule.
-    -   **Immediate Persistence**: Dynamic rule management with instant backend synchronization.
--   **History & Analytics**: Comprehensive dashboard for tracking pass rates, total scans, and historical inspection reports with heatmaps.
--   **Multi-Model Management**: Switch between different trained model sets on the fly from the UI.
--   **Simulation Suite**: Built-in "Simulation Trigger" to process `test_images/` batches for system verification and alert testing.
+    -   **Custom Rules**: "Failure Streaks" or "Pass Rate Drops" triggers.
+    -   **Multi-Channel**: Multiple Email recipients and Webhooks per rule.
+-   **History & Analytics**: Real-time stats, pass rates, and interactive historical logs with heatmaps.
+-   **Multi-Model Management**: Hot-swappable model sets during runtime.
+-   **Simulation Suite**: Batch process `test_images/` to verify alert rules and system logic.
 
 ## 📂 Project Structure
 
--   `backend/`: FastAPI core, configuration management, and alert dispatching.
--   `backend/inference/`: Model loading, Padim logic, and history persistence.
--   `frontend/`: React + Vite + Lucide Icons + CSS (Inspection & History).
--   `models/`: Hierarchical storage for `.ckpt` weight files.
--   `test_images/`: Directory for batch simulation samples.
--   `standalone_scripts/`: Utilities for standalone model testing and parity verification.
+-   `backend/`: FastAPI core and alerting engine.
+-   `backend/inference/`: AI logic, history persistence, and model management.
+-   `frontend/`: React application (Live Dashboard & History).
+-   `model_lab/`: Streamlit-based benchmarking and evaluation suite.
+-   `models/`: Storage for versioned `.ckpt` weight files.
+-   `test_dataset/`: Angle-aware directory for model evaluation.
+-   `test_images/`: Samples for end-to-end system simulation.
