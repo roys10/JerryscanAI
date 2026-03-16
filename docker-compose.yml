@@ -1,0 +1,16 @@
+services:
+  jerryscanai-backend:
+    # Pulls the image from GitHub Container Registry
+    # IMPORTANT: Ensure this matches your GitHub username / organization and repository name
+    image: ghcr.io/${GITHUB_REPOSITORY:-royse/jerryscanai}:main
+    container_name: jerryscanai-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./results:/app/results
+      - ./backend/inspections_history.json:/app/backend/inspections_history.json
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000

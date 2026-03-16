@@ -29,11 +29,28 @@ A professional AI-powered surface defect detection system built with **FastAPI**
     │   └── Optimized_V2/
     │       └── ...
     ```
-4.  **Start Server**:
+4.  **Start Server Locally**:
     ```bash
     cd backend
     python .\main.py
     ```
+
+### 1B. Production Deployment (CI/CD via Docker)
+The backend is configured for automated deployment via GitHub Actions and Docker by building a private image in the GitHub Container Registry (GHCR).
+
+1. **Clone to Remote Server**: Ensure your remote Linux machine has the repository cloned to `~/jerryscanai` and that Docker is installed.
+2. **GitHub Secrets**: First, generate a **Personal Access Token (classic)** with `read:packages` permissions on GitHub. Then, in your GitHub repository settings, add the following secrets:
+   - `SSH_HOST`: IP or domain of your Linux machine.
+   - `SSH_USERNAME`: Your login username (e.g., `ubuntu`).
+   - `SSH_KEY`: Your private SSH key.
+   - `GHCR_PAT`: The Personal Access Token you generated (used to pull the image onto your server).
+3. **Automated Deploy**: Pushing to the `main` branch will automatically trigger the `.github/workflows/deploy.yml` action. It will build the image, push it to GHCR, connect to your server, authenticate Docker, pull the latest image, and restart the container.
+
+Alternatively, manually deploy on your server (assuming Docker is authenticated):
+```bash
+docker compose pull
+docker compose up -d
+```
 
 ### 2. Frontend Setup
 1.  **Install Dependencies**:
