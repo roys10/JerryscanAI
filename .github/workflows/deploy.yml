@@ -46,9 +46,9 @@ jobs:
       - name: Deploy to Remote Linux Server
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
+          host: ${{ secrets.HOST_IP }}
+          username: ${{ secrets.HOST_USERNAME }}
+          password: ${{ secrets.HOST_PASSWORD }}
           script: |
             # Navigate to the deployment directory.
             # IMPORTANT: You must clone the repository to this path beforehand.
