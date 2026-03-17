@@ -12,8 +12,8 @@ RUN pip install uv
 # Set the working directory
 WORKDIR /app
 
-# Copy dependency files first
-COPY pyproject.toml uv.lock ./
+# Copy dependency files first (Deliberately omit uv.lock so it resolves fresh against the CPU index)
+COPY pyproject.toml ./
 
 # Ensure backend directory is present, used in run setup
 RUN mkdir -p backend/inference
