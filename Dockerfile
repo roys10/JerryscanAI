@@ -20,11 +20,8 @@ RUN mkdir -p backend/inference
 
 # Generate a fresh requirements list (ignoring lockfiles) and install it into the system Python
 # We use the CPU-only PyTorch index to save ~6GB of space, and disable cache to keep the image small
-ENV UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu"
-RUN uv pip compile pyproject.toml -o requirements.txt && \
-    uv pip install --system --no-cache -r requirements.txt
+RUN uv sync
 
-# Copy only the backend app
 COPY backend/ backend/
 
 # Expose the API port
