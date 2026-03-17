@@ -30,7 +30,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: ghcr.io/roys10/jerryscanai:latest
 
   deploy:
     runs-on: ubuntu-latest
