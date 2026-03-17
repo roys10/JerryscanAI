@@ -21,8 +21,8 @@ RUN mkdir -p backend/inference
 # Sync dependencies
 RUN uv sync --no-dev
 
-# Copy the rest of the application
-COPY . .
+# Copy only the backend app
+COPY backend/ backend/
 
 # Expose the API port
 EXPOSE 8000
