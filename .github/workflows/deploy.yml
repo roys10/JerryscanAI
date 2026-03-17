@@ -74,13 +74,26 @@ jobs:
           password: ${{ secrets.HOST_PASSWORD }}
           script: |
             cd ~/jerryscanai
+
+            # 1. Create a deployment script to run all docker commands
+            cat << 'EOF' > deploy.sh
+            #!/bin/bash
             
-            # 1. Log in to GHCR on the remote machine
-            echo "${{ secrets.GHCR_PAT }}" | echo "${{ secrets.HOST_PASSWORD }}" | sudo -S docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            # 2. Pull the latest image and restart the container
-            echo "${{ secrets.HOST_PASSWORD }}" | sudo -S docker compose pull
-            echo "${{ secrets.HOST_PASSWORD }}" | sudo -S docker compose up -d
-
-            # 3. Clean up old unused images to save space
-            echo "${{ secrets.HOST_PASSWORD }}" | sudo -S docker image prune -a -f
+            # Log in to GHCR
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Pull the latest image and restart the container
+            docker compose pull
+            docker compose up -d
+            
+            # Clean up old unused images to save space
+            docker image prune -a -f
+            EOF
+            
+            chmod +x deploy.sh
+            
+            # 2. Execute the entire script as sudo, passing the password via stdin
+            echo "${{ secrets.HOST_PASSWORD }}" | sudo -S ./deploy.sh
+            
+            # 3. Clean up the script so it doesn't leave secrets behind
+            rm deploy.sh

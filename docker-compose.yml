@@ -10,7 +10,6 @@ services:
     volumes:
       - ./models:/app/models
       - ./results:/app/results
-      - ./backend/inspections_history.json:/app/backend/inspections_history.json
     environment:
       - HOST=0.0.0.0
       - PORT=8000
