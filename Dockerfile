@@ -18,8 +18,10 @@ COPY pyproject.toml uv.lock ./
 # Ensure backend directory is present, used in run setup
 RUN mkdir -p backend/inference
 
-# Sync dependencies
-RUN uv sync --no-dev
+# Sync dependencies using the CPU-only PyTorch index to save ~6GB of space
+# Also disable the cache so downloaded wheels aren't saved in the final image
+ENV UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu"
+RUN uv sync --no-dev --no-cache
 
 # Copy only the backend app
 COPY backend/ backend/
