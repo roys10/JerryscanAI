@@ -3,7 +3,7 @@ name: Build and Deploy Backend
 on:
   push:
     branches:
-      - main
+      - backend-CD
 
 # Ensure we have permissions to push to GitHub Container Registry (GHCR)
 permissions:
