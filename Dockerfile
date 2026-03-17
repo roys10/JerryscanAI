@@ -18,8 +18,8 @@ COPY pyproject.toml uv.lock ./
 # Ensure backend directory is present, used in run setup
 RUN mkdir -p backend/inference
 
-# Sync dependencies (system-wide in the container)
-RUN uv sync --no-dev --system
+# Sync dependencies
+RUN uv sync --no-dev
 
 # Copy the rest of the application
 COPY . .
