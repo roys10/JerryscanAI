@@ -14,7 +14,6 @@ dependencies = [
     "pillow>=12.1.1",
     "python-multipart>=0.0.22",
     "scikit-learn>=1.4.0",
-    "torch>=2.10.0",
     "uvicorn>=0.41.0",
 ]
 
