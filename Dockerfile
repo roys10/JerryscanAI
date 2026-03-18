@@ -19,8 +19,7 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock* ./
 
 # Generate requirements.txt and install deps in builder stage
-RUN UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu \
-    uv export --no-dev --output-file requirements.txt && \
+RUN uv export --no-dev --extra-index-url https://download.pytorch.org/whl/cpu --output-file requirements.txt && \
     pip install --no-cache-dir --target=/app/deps -r requirements.txt
 
 # Runtime stage
