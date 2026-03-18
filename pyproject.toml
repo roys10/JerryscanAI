@@ -9,12 +9,16 @@ dependencies = [
     "fastapi>=0.110.0",
     "lightning>=2.6.1",
     "numpy>=2.3.5",
-    "opencv-python>=4.13.0.92",
+    "opencv-python-headless>=4.13.0.92",
     "openvino>=2025.4.1",
     "pillow>=12.1.1",
     "python-multipart>=0.0.22",
     "scikit-learn>=1.4.0",
-    "streamlit>=1.32.0",
     "torch>=2.10.0",
     "uvicorn>=0.41.0",
+]
+
+[project.optional-dependencies]
+lab = [
+    "streamlit>=1.32.0",
 ]

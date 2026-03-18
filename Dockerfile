@@ -1,31 +1,33 @@
 FROM python:3.12-slim
 
-# Install system dependencies
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV UV_NO_CACHE=1
+
+WORKDIR /app
+
+# System libs needed by opencv/headless image handling
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast dependency resolution
-RUN pip install uv
+# Install uv
+RUN pip install --no-cache-dir uv
 
-# Set the working directory
-WORKDIR /app
+# Copy only dependency metadata first for better layer caching
+COPY pyproject.toml ./
 
-# Copy dependency files first
-COPY pyproject.toml uv.lock ./
+# Install runtime deps into system Python
+# IMPORTANT:
+# - this avoids creating .venv
+# - this keeps the image smaller than uv sync
+RUN uv pip install --system -r pyproject.toml \
+    && rm -rf /root/.cache
 
-# Ensure backend directory is present, used in run setup
-RUN mkdir -p backend/inference
+# Copy only the backend code
+COPY backend/ ./backend/
 
-# Sync dependencies (system-wide in the container)
-RUN uv sync --no-dev --system
-
-# Copy the rest of the application
-COPY . .
-
-# Expose the API port
 EXPOSE 8000
 
-# Start server using python directly
 CMD ["python", "backend/main.py"]
