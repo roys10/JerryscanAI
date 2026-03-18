@@ -1,0 +1,35 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Python environment
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.pytest_cache
+
+# Node.js
+frontend/node_modules
+frontend/dist
+npm-debug.log*
+
+# Datasets and generated files
+test_dataset
+test_images
+cli_predictions
+model_lab
+
+# Persistent storage (Mounted by volumes)
+models
+results
+backend/inspections_history.json
+
+# Tooling and configs
+EXPORTED_CHAT.md
+"Renaming Camera Angles.md"
+docker-compose.yml
+.dockerignore
