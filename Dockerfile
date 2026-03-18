@@ -6,9 +6,8 @@ ENV UV_NO_CACHE=1
 
 WORKDIR /app
 
-# System libs needed by opencv/headless image handling
+# System libs needed by image handling (no libgl1 needed for headless)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,10 +18,9 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml ./
 
 # Install runtime deps into system Python
-# IMPORTANT:
-# - this avoids creating .venv
-# - this keeps the image smaller than uv sync
-RUN uv pip install --system -r pyproject.toml \
+# Use the CPU-only PyTorch index to avoid 5GB+ of GPU binaries
+RUN UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu \
+    uv pip install --system -r pyproject.toml \
     && rm -rf /root/.cache
 
 # Copy only the backend code
