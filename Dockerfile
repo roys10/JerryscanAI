@@ -20,7 +20,7 @@ COPY pyproject.toml uv.lock* ./
 RUN uv pip install --system -r pyproject.toml   
 # Install runtime deps into system Python
 # Use the CPU-only PyTorch index to avoid 5GB+ of GPU binaries
-RUN UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu \
+RUN UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 #     uv export --no-dev --output-file requirements.txt && \
 #     pip install --no-cache-dir -r requirements.txt
 
