@@ -14,14 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv
 RUN pip install --no-cache-dir uv
 
-# Copy only dependency metadata first for better layer caching
-COPY pyproject.toml ./
+# Copy dependency metadata for better layer caching
+COPY pyproject.toml uv.lock* ./
 
 # Install runtime deps into system Python
 # Use the CPU-only PyTorch index to avoid 5GB+ of GPU binaries
 RUN UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu \
-    uv pip install --system -r pyproject.toml \
-    && rm -rf /root/.cache
+    uv sync --no-dev --system
 
 # Copy only the backend code
 COPY backend/ ./backend/
