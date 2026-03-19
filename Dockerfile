@@ -35,9 +35,14 @@ WORKDIR /app
 # Copy installed dependencies from builder (`uv pip --target` writes directly under /app/deps)
 COPY --from=builder /app/deps /usr/local/lib/python3.12/site-packages
 
-# System libs needed by image handling
+# System libs needed by OpenCV runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
+    libxcb1 \
+    libgl1 \
+    libxext6 \
+    libsm6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only the backend code
