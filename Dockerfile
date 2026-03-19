@@ -20,7 +20,7 @@ COPY pyproject.toml uv.lock* ./
 
 # Export locked runtime dependencies (excluding the root project),
 # drop GPU-only packages, then install CPU-only torch backend.
-RUN uv export --frozen --no-dev --no-emit-project --no-hashes --no-annotate --no-header --output-file requirements.txt && \
+RUN uv export --no-dev --no-emit-project --no-hashes --no-annotate --no-header --output-file requirements.txt && \
     grep -Ev '^(nvidia-|triton==|cuda-bindings==|cuda-pathfinder==)' requirements.txt > requirements.cpu.txt && \
     uv pip install --torch-backend cpu --requirements requirements.cpu.txt --target /app/deps
 
