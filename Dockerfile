@@ -18,9 +18,8 @@ RUN pip install --no-cache-dir uv
 # Copy dependency metadata for better layer caching
 COPY pyproject.toml uv.lock* ./
 
-# Generate requirements.txt and install deps in builder stage
-RUN uv export --no-dev --extra-index-url https://download.pytorch.org/whl/cpu --output-file requirements.txt && \
-    pip install --no-cache-dir --target=/app/deps -r requirements.txt
+# Install dependencies via `uv pip install --group default` so no `.venv` is created
+RUN uv pip install --group default --extra-index-url https://download.pytorch.org/whl/cpu --target=/app/deps
 
 # Runtime stage
 FROM python:3.12-slim
@@ -30,7 +29,7 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Copy installed dependencies from builder
+# Copy installed dependencies from builder (target directory created by `uv pip install`)
 COPY --from=builder /app/deps /usr/local/lib/python3.12/site-packages
 
 # System libs needed by image handling
