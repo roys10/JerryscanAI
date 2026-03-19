@@ -4,6 +4,7 @@ FROM python:3.12-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV UV_NO_CACHE=1
+ENV UV_NO_INSTALL_PROJECT=1
 
 WORKDIR /app
 
@@ -15,11 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv
 RUN pip install --no-cache-dir uv
 
-# Copy dependency metadata plus README (needed by hatch during build)
+# Copy dependency metadata plus README (needed by hatch during build if export runs)
 COPY pyproject.toml uv.lock* README.md ./
 
-# Sync dependencies via `uv sync`, then move the generated `.venv` to /app/deps
-RUN uv sync --no-dev --extra-index-url https://download.pytorch.org/whl/cpu && mv .venv /app/deps
+# Export a pinned requirements.txt and install via uv pip install into /app/deps (no .venv)
+RUN uv export --no-dev --extra-index-url https://download.pytorch.org/whl/cpu --output-file requirements.txt && \
+    uv pip install --requirements requirements.txt --target /app/deps
 
 # Runtime stage
 FROM python:3.12-slim
