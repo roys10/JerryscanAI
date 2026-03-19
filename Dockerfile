@@ -4,7 +4,6 @@ FROM python:3.12-slim AS builder
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV UV_NO_CACHE=1
-ENV UV_NO_INSTALL_PROJECT=1
 
 WORKDIR /app
 
@@ -16,11 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv
 RUN pip install --no-cache-dir uv
 
-# Copy dependency metadata plus README (needed by hatch during build if export runs)
-COPY pyproject.toml uv.lock* README.md ./
+# Copy dependency metadata
+COPY pyproject.toml uv.lock* ./
 
-# Export a pinned requirements.txt and install via uv pip install into /app/deps (no .venv)
-RUN uv export --no-dev --extra-index-url https://download.pytorch.org/whl/cpu --output-file requirements.txt && \
+# Export locked runtime dependencies (excluding the root project) and install with uv pip
+RUN uv export --frozen --no-dev --no-emit-project --output-file requirements.txt && \
     uv pip install --requirements requirements.txt --target /app/deps
 
 # Runtime stage
@@ -31,8 +30,8 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Copy installed dependencies from builder (target directory created by `uv sync`)
-COPY --from=builder /app/deps/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+# Copy installed dependencies from builder (`uv pip --target` writes directly under /app/deps)
+COPY --from=builder /app/deps /usr/local/lib/python3.12/site-packages
 
 # System libs needed by image handling
 RUN apt-get update && apt-get install -y --no-install-recommends \
