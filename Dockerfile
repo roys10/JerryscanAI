@@ -18,9 +18,11 @@ RUN pip install --no-cache-dir uv
 # Copy dependency metadata
 COPY pyproject.toml uv.lock* ./
 
-# Export locked runtime dependencies (excluding the root project) and install with uv pip
-RUN uv export --frozen --no-dev --no-emit-project --output-file requirements.txt && \
-    uv pip install --requirements requirements.txt --target /app/deps
+# Export locked runtime dependencies (excluding the root project),
+# drop GPU-only packages, then install CPU-only torch backend.
+RUN uv export --frozen --no-dev --no-emit-project --no-hashes --no-annotate --no-header --output-file requirements.txt && \
+    grep -Ev '^(nvidia-|triton==|cuda-bindings==|cuda-pathfinder==)' requirements.txt > requirements.cpu.txt && \
+    uv pip install --torch-backend cpu --requirements requirements.cpu.txt --target /app/deps
 
 # Runtime stage
 FROM python:3.12-slim
