@@ -4,7 +4,7 @@ import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, Refr
 import './Inspection.css';
 import './History.css';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
 function App() {
   // Navigation
@@ -71,7 +71,7 @@ function App() {
 
   const fetchSettings = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/settings`);
+      const response = await axios.get(`${BACKEND_BASE_URL}/settings`);
       setSystemSettings(response.data);
     } catch (err) {
       console.error("Failed to fetch settings:", err);
@@ -82,7 +82,7 @@ function App() {
     if (e) e.preventDefault();
     setSettingsLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/settings`, systemSettings);
+      const response = await axios.post(`${BACKEND_BASE_URL}/settings`, systemSettings);
       setSystemSettings(response.data.settings);
     } catch (err) {
       console.error("Failed to save settings:", err);
@@ -94,7 +94,7 @@ function App() {
 
   const fetchModels = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/models`);
+      const response = await axios.get(`${BACKEND_BASE_URL}/models`);
       setAvailableModels(response.data);
       if (response.data.length > 0 && !selectedModel) {
         setSelectedModel(response.data[0]);
@@ -107,8 +107,8 @@ function App() {
   const fetchHistory = async () => {
     try {
       const url = filter === 'all'
-        ? `${API_BASE_URL}/history`
-        : `${API_BASE_URL}/history?status=${filter}`;
+        ? `${BACKEND_BASE_URL}/history`
+        : `${BACKEND_BASE_URL}/history?status=${filter}`;
       const response = await axios.get(url);
       setHistory(response.data);
     } catch (err) {
@@ -118,7 +118,7 @@ function App() {
 
   const fetchStats = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/stats`);
+      const response = await axios.get(`${BACKEND_BASE_URL}/stats`);
       setStats(response.data);
     } catch (err) {
       console.error("Failed to fetch stats:", err);
@@ -128,7 +128,7 @@ function App() {
   const simulateTrigger = async () => {
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/simulate-trigger?model_name=${selectedModel}`);
+      const response = await axios.post(`${BACKEND_BASE_URL}/simulate-trigger?model_name=${selectedModel}`);
       if (activePage === 'history') {
         fetchHistory();
         fetchStats();
@@ -210,7 +210,7 @@ function App() {
     });
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/inspect-batch?model_name=${selectedModel}`, formData, {
+      const response = await axios.post(`${BACKEND_BASE_URL}/inspect-batch?model_name=${selectedModel}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -609,7 +609,7 @@ function App() {
 
     // Immediate persistence
     try {
-      await axios.post(`${API_BASE_URL}/settings`, newSettings);
+      await axios.post(`${BACKEND_BASE_URL}/settings`, newSettings);
     } catch (err) {
       console.error("Failed to persist rule change:", err);
     }
@@ -619,7 +619,7 @@ function App() {
     const newSettings = { ...systemSettings, alerts: systemSettings.alerts.filter(r => r.id !== id) };
     setSystemSettings(newSettings);
     try {
-      await axios.post(`${API_BASE_URL}/settings`, newSettings);
+      await axios.post(`${BACKEND_BASE_URL}/settings`, newSettings);
     } catch (err) {
       console.error("Failed to persist rule deletion:", err);
     }
@@ -632,7 +632,7 @@ function App() {
     };
     setSystemSettings(newSettings);
     try {
-      await axios.post(`${API_BASE_URL}/settings`, newSettings);
+      await axios.post(`${BACKEND_BASE_URL}/settings`, newSettings);
     } catch (err) {
       console.error("Failed to persist rule toggle:", err);
     }
