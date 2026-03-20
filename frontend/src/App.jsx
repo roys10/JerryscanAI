@@ -42,12 +42,12 @@ function App() {
   const [selectedModel, setSelectedModel] = useState('');
 
   // Angle Selection State
-  const [activeAngle, setActiveAngle] = useState('front');
+  const [activeAngle, setActiveAngle] = useState('G01');
   const angles = [
-    { id: 'front', label: 'Front View' },
-    { id: 'back', label: 'Back View' },
-    { id: 'side_l', label: 'Left Side' },
-    { id: 'side_r', label: 'Right Side' },
+    { id: 'G01', label: 'G01' },
+    { id: 'G02', label: 'G02' },
+    { id: 'G03', label: 'G03' },
+    { id: 'G04', label: 'G04' },
   ];
 
   // View Mode State
@@ -579,7 +579,7 @@ function App() {
                 </td>
                 <td>
                   <div style={{ display: 'flex', gap: '4px' }}>
-                    {[['front', 'Front'], ['back', 'Back'], ['side_l', 'L'], ['side_r', 'R']].map(([id, label]) => (
+                    {[['G01', 'G01'], ['G02', 'G02'], ['G03', 'G03'], ['G04', 'G04']].map(([id, label]) => (
                       <div key={id} style={{
                         width: 14, height: 14, borderRadius: '2px', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white',
                         background: !session.angles[id] ? '#e5e7eb' : (session.angles[id].status === 'PASS' ? '#10b981' : (session.angles[id].status === 'FAIL' ? '#ef4444' : '#f59e0b'))

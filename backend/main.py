@@ -88,15 +88,15 @@ async def inspect_image(
 @app.post("/inspect-batch")
 async def inspect_batch(
     model_name: Optional[str] = None,
-    front: Optional[UploadFile] = File(None),
-    back: Optional[UploadFile] = File(None),
-    side_l: Optional[UploadFile] = File(None),
-    side_r: Optional[UploadFile] = File(None),
+    G01: Optional[UploadFile] = File(None),
+    G02: Optional[UploadFile] = File(None),
+    G03: Optional[UploadFile] = File(None),
+    G04: Optional[UploadFile] = File(None),
 ):
     """
     Processes multiple angles and saves a single history session.
     """
-    files = {"front": front, "back": back, "side_l": side_l, "side_r": side_r}
+    files = {"G01": G01, "G02": G02, "G03": G03, "G04": G04}
     results = {}
     overall_status = "PASS"
 
@@ -174,7 +174,7 @@ async def simulate_trigger(model_name: Optional[str] = None):
         results = {}
         overall_status = "PASS"
 
-        for angle_id in ["front", "back", "side_l", "side_r"]:
+        for angle_id in ["G01", "G02", "G03", "G04"]:
             img_path = None
             for ext in [".jpg", ".png", ".jpeg"]:
                 p = os.path.join(folder_path, f"{angle_id}{ext}")
