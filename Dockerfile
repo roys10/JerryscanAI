@@ -48,6 +48,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy only the backend code
 COPY backend/ ./backend/
 
-EXPOSE 8000
+EXPOSE 8000 443
 
 CMD ["python", "backend/main.py"]
