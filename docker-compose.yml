@@ -1,0 +1,16 @@
+services:
+  jerryscanai-backend:
+    # Pulls the image from GitHub Container Registry
+    # IMPORTANT: Ensure this matches your GitHub username / organization and repository name
+    image: ghcr.io/roys10/jerryscanai:latest
+    container_name: jerryscanai-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "443:443"
+    volumes:
+      - ./models:/app/models
+      - ./results:/app/results
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
