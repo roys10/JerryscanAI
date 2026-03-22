@@ -2,84 +2,162 @@
 import os
 import json
 import uuid
+import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional
 
-class HistoryManager:
-    def __init__(self, history_file: str = "inspections_history.json"):
-        # Put history file in backend root or dedicated data dir
-        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.history_path = os.path.join(self.base_dir, history_file)
-        self._ensure_file_exists()
 
-    def _ensure_file_exists(self):
-        if not os.path.exists(self.history_path):
-            with open(self.history_path, 'w') as f:
-                json.dump([], f)
+class HistoryManager:
+    def __init__(self, db_file: str = "inspections_history.db"):
+        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.db_path = os.path.join(self.base_dir, db_file)
+        self._init_db()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+    def _init_db(self):
+        conn = self._get_conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                overall_status TEXT NOT NULL,
+                model_name TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS angle_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                angle_id TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(overall_status);
+            CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_angle_results_session ON angle_results(session_id);
+        """)
+        conn.commit()
+        conn.close()
 
     def save_session(self, angles_results: Dict[str, Dict], overall_status: str, model_name: Optional[str] = None) -> str:
-        """
-        Saves a full Jerrycan inspection session.
-        """
+        """Saves a full Jerrycan inspection session."""
         session_id = str(uuid.uuid4())
-        session = {
-            "id": session_id,
-            "timestamp": datetime.now().isoformat(),
-            "overall_status": overall_status,
-            "model_name": model_name,
-            "angles": angles_results
-        }
+        timestamp = datetime.now().isoformat()
 
-        with open(self.history_path, 'r+') as f:
-            data = json.load(f)
-            data.insert(0, session) # Most recent first
-            f.seek(0)
-            json.dump(data, f, indent=4)
-            f.truncate()
-        
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO sessions (id, timestamp, overall_status, model_name) VALUES (?, ?, ?, ?)",
+                (session_id, timestamp, overall_status, model_name),
+            )
+            for angle_id, result in angles_results.items():
+                conn.execute(
+                    "INSERT INTO angle_results (session_id, angle_id, result_json) VALUES (?, ?, ?)",
+                    (session_id, angle_id, json.dumps(result)),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
         return session_id
 
     def get_history(self, status: Optional[str] = None, limit: int = 50) -> List[Dict]:
-        """
-        Retrieves inspection history with optional filtering.
-        """
-        with open(self.history_path, 'r') as f:
-            data = json.load(f)
-        
-        if status:
-            data = [s for s in data if s["overall_status"] == status]
-        
-        return data[:limit]
+        """Retrieves inspection history with optional filtering. Returns summaries without full image data for performance."""
+        conn = self._get_conn()
+        try:
+            if status:
+                rows = conn.execute(
+                    "SELECT id, timestamp, overall_status, model_name FROM sessions WHERE overall_status = ? ORDER BY timestamp DESC LIMIT ?",
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, timestamp, overall_status, model_name FROM sessions ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+
+            if not rows:
+                return []
+
+            # Batch-load all angle results in a single query to avoid N+1
+            session_ids = [row["id"] for row in rows]
+            placeholders = ",".join("?" * len(session_ids))
+            angle_rows = conn.execute(
+                f"SELECT session_id, angle_id, result_json FROM angle_results WHERE session_id IN ({placeholders})",
+                session_ids,
+            ).fetchall()
+
+            angles_by_session = {}
+            for angle_row in angle_rows:
+                sid = angle_row["session_id"]
+                if sid not in angles_by_session:
+                    angles_by_session[sid] = {}
+                angles_by_session[sid][angle_row["angle_id"]] = json.loads(angle_row["result_json"])
+
+            return [
+                {
+                    "id": row["id"],
+                    "timestamp": row["timestamp"],
+                    "overall_status": row["overall_status"],
+                    "model_name": row["model_name"],
+                    "angles": angles_by_session.get(row["id"], {}),
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def _load_angles(self, conn: sqlite3.Connection, session_id: str) -> Dict[str, Dict]:
+        """Loads angle results for a session."""
+        rows = conn.execute(
+            "SELECT angle_id, result_json FROM angle_results WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+        return {row["angle_id"]: json.loads(row["result_json"]) for row in rows}
 
     def get_session(self, session_id: str) -> Optional[Dict]:
-        """
-        Gets a single session by ID.
-        """
-        with open(self.history_path, 'r') as f:
-            data = json.load(f)
-        
-        for s in data:
-            if s["id"] == session_id:
-                return s
-        return None
+        """Gets a single session by ID."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT id, timestamp, overall_status, model_name FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "timestamp": row["timestamp"],
+                "overall_status": row["overall_status"],
+                "model_name": row["model_name"],
+                "angles": self._load_angles(conn, session_id),
+            }
+        finally:
+            conn.close()
 
     def get_stats(self) -> Dict:
-        """
-        Calculates aggregated statistics.
-        """
-        with open(self.history_path, 'r') as f:
-            data = json.load(f)
-        
-        total = len(data)
-        if total == 0:
-            return {"total": 0, "pass_rate": 0, "fails": 0, "passes": 0}
-            
-        passes = len([s for s in data if s["overall_status"] == "PASS"])
-        fails = total - passes
-        
-        return {
-            "total": total,
-            "passes": passes,
-            "fails": fails,
-            "pass_rate": (passes / total) * 100
-        }
+        """Calculates aggregated statistics using SQL."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) as total, SUM(CASE WHEN overall_status = 'PASS' THEN 1 ELSE 0 END) as passes FROM sessions"
+            ).fetchone()
+
+            total = row["total"]
+            passes = row["passes"] or 0
+            fails = total - passes
+
+            return {
+                "total": total,
+                "passes": passes,
+                "fails": fails,
+                "pass_rate": (passes / total) * 100 if total > 0 else 0,
+            }
+        finally:
+            conn.close()
