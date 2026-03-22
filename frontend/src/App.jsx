@@ -1,18 +1,12 @@
 import { useState, useEffect } from 'react';
 import * as api from './services/api';
+import { ANGLES } from './constants';
 import Navbar from './components/Navbar';
 import InspectionConsole from './components/InspectionConsole';
 import HistoryDashboard from './components/HistoryDashboard';
 import AlertsManager from './components/AlertsManager';
 import './Inspection.css';
 import './History.css';
-
-const ANGLES = [
-  { id: 'G01', label: 'G01' },
-  { id: 'G02', label: 'G02' },
-  { id: 'G03', label: 'G03' },
-  { id: 'G04', label: 'G04' },
-];
 
 function App() {
   // Navigation
@@ -43,14 +37,33 @@ function App() {
   const [availableModels, setAvailableModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
 
+  // Revoke blob URLs when angleData changes to prevent memory leaks
   useEffect(() => {
-    api.fetchModels().then(r => {
-      setAvailableModels(r.data);
-      if (r.data.length > 0 && !selectedModel) setSelectedModel(r.data[0]);
-    }).catch(err => console.error("Failed to fetch models:", err));
+    return () => {
+      Object.values(angleData)
+        .map(d => d.previewUrl)
+        .filter(u => u?.startsWith('blob:'))
+        .forEach(url => URL.revokeObjectURL(url));
+    };
+  }, [angleData]);
 
-    api.fetchSettings().then(r => setSystemSettings(r.data))
-      .catch(err => console.error("Failed to fetch settings:", err));
+  useEffect(() => {
+    const fetchInitialData = async () => {
+      try {
+        const [modelsRes, settingsRes] = await Promise.all([
+          api.fetchModels(),
+          api.fetchSettings(),
+        ]);
+        setAvailableModels(modelsRes.data);
+        if (modelsRes.data.length > 0 && !selectedModel) {
+          setSelectedModel(modelsRes.data[0]);
+        }
+        setSystemSettings(settingsRes.data);
+      } catch (err) {
+        console.error("Failed to fetch initial data:", err);
+      }
+    };
+    fetchInitialData();
   }, []);
 
   useEffect(() => {

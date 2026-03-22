@@ -82,17 +82,34 @@ class HistoryManager:
                     (limit,),
                 ).fetchall()
 
-            results = []
-            for row in rows:
-                session = {
+            if not rows:
+                return []
+
+            # Batch-load all angle results in a single query to avoid N+1
+            session_ids = [row["id"] for row in rows]
+            placeholders = ",".join("?" * len(session_ids))
+            angle_rows = conn.execute(
+                f"SELECT session_id, angle_id, result_json FROM angle_results WHERE session_id IN ({placeholders})",
+                session_ids,
+            ).fetchall()
+
+            angles_by_session = {}
+            for angle_row in angle_rows:
+                sid = angle_row["session_id"]
+                if sid not in angles_by_session:
+                    angles_by_session[sid] = {}
+                angles_by_session[sid][angle_row["angle_id"]] = json.loads(angle_row["result_json"])
+
+            return [
+                {
                     "id": row["id"],
                     "timestamp": row["timestamp"],
                     "overall_status": row["overall_status"],
                     "model_name": row["model_name"],
-                    "angles": self._load_angles(conn, row["id"]),
+                    "angles": angles_by_session.get(row["id"], {}),
                 }
-                results.append(session)
-            return results
+                for row in rows
+            ]
         finally:
             conn.close()
 

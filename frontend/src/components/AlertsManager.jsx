@@ -22,6 +22,7 @@ export default function AlertsManager({ systemSettings, setSystemSettings }) {
   };
 
   const addOrUpdateRule = async () => {
+    const originalSettings = systemSettings;
     const updatedAlerts = editingRule.id
       ? systemSettings.alerts.map(r => r.id === editingRule.id ? editingRule : r)
       : [...systemSettings.alerts, { ...editingRule, id: Date.now().toString() }];
@@ -35,20 +36,26 @@ export default function AlertsManager({ systemSettings, setSystemSettings }) {
       await api.saveSettings(newSettings);
     } catch (err) {
       console.error("Failed to persist rule change:", err);
+      alert("Failed to save rule. Reverting changes.");
+      setSystemSettings(originalSettings);
     }
   };
 
   const deleteRule = async (id) => {
+    const originalSettings = systemSettings;
     const newSettings = { ...systemSettings, alerts: systemSettings.alerts.filter(r => r.id !== id) };
     setSystemSettings(newSettings);
     try {
       await api.saveSettings(newSettings);
     } catch (err) {
       console.error("Failed to persist rule deletion:", err);
+      alert("Failed to delete rule. Reverting changes.");
+      setSystemSettings(originalSettings);
     }
   };
 
   const toggleRule = async (id) => {
+    const originalSettings = systemSettings;
     const newSettings = {
       ...systemSettings,
       alerts: systemSettings.alerts.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r)
@@ -58,6 +65,8 @@ export default function AlertsManager({ systemSettings, setSystemSettings }) {
       await api.saveSettings(newSettings);
     } catch (err) {
       console.error("Failed to persist rule toggle:", err);
+      alert("Failed to toggle rule. Reverting changes.");
+      setSystemSettings(originalSettings);
     }
   };
 

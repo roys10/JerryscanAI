@@ -1,13 +1,7 @@
 import { CheckCircle, XCircle, AlertCircle, History, Brain, Upload, Camera, Loader2, RefreshCw } from 'lucide-react';
+import { ANGLES } from '../constants';
 import AngleSelector from './AngleSelector';
 import ImageViewport from './ImageViewport';
-
-const ANGLES = [
-  { id: 'G01', label: 'G01' },
-  { id: 'G02', label: 'G02' },
-  { id: 'G03', label: 'G03' },
-  { id: 'G04', label: 'G04' },
-];
 
 export default function InspectionConsole({
   globalResult,
