@@ -1,9 +1,24 @@
 {
+    "smtp": {
+        "server": "smtp.gmail.com",
+        "port": 587,
+        "user": "jerryscan.ai@gmail.com",
+        "password": "dtzv mzjf acxt tjvd"
+    },
+    "alerts": [
+        {
+            "id": "default-streak",
+            "name": "Failure Streak",
+            "type": "consecutive_fails",
+            "threshold": 1,
+            "emails": [
+                "roysegev10@gmail.com"
+            ],
+            "webhook_url": "",
+            "enabled": true
+        }
+    ],
     "alert_threshold": 1,
     "alert_email_address": "roysegev10@gmail.com",
-    "alert_webhook_url": "",
-    "smtp_server": "smtp.gmail.com",
-    "smtp_port": 587,
-    "smtp_user": "jerryscan.ai@gmail.com",
-    "smtp_password": "dtzv mzjf acxt tjvd"
+    "alert_webhook_url": ""
 }

@@ -4,7 +4,7 @@ import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, Refr
 import './Inspection.css';
 import './History.css';
 
-const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:443';
 
 function App() {
   // Navigation

@@ -110,17 +110,21 @@ class AlertManager:
 
             if server_port == 465:
                 context = ssl.create_default_context()
+                print(f"[AlertManager] Connecting to {server_host}:{server_port} (SSL)...")
                 with smtplib.SMTP_SSL(server_host, server_port, context=context) as server:
                     server.login(user, password)
                     server.send_message(msg)
             else:
+                print(f"[AlertManager] Connecting to {server_host}:{server_port} (STARTTLS)...")
                 with smtplib.SMTP(server_host, server_port) as server:
                     server.starttls()
                     server.login(user, password)
                     server.send_message(msg)
-            print(f"[AlertManager] Email sent to {len(recipients)} recipients.")
+            print(f"[AlertManager] SUCCESS: Email sent to {len(recipients)} recipients ({', '.join(recipients)}).")
+        except smtplib.SMTPAuthenticationError:
+            print("[AlertManager] ERROR: SMTP Authentication failed. Please check your user/password or App Password.")
         except Exception as e:
-            print(f"[AlertManager] Email Error: {e}")
+            print(f"[AlertManager] ERROR: Unexpected Email Error: {type(e).__name__}: {e}")
 
     def _send_webhook(self, url: str, subject: str, body: str):
         try:
