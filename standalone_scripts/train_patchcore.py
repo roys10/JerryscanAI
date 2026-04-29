@@ -7,6 +7,9 @@ from anomalib.data.utils.split import TestSplitMode, ValSplitMode
 from anomalib.engine import Engine
 from anomalib.models import Patchcore
 
+### command to run:
+### .\.venv\Scripts\python.exe standalone_scripts\train_patchcore.py --normal-dir training_data\G01_aligned_last500\train\normal
+
 
 def parse_layers(value: str) -> tuple[str, ...]:
     layers = tuple(part.strip() for part in value.split(",") if part.strip())
