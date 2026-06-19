@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import cv2
 import base64
+import anomalib
 from anomalib.models import Padim, Patchcore
 from torchvision.transforms import v2
 from PIL import Image
@@ -19,16 +20,8 @@ class DictDot(dict):
 class JerryScanAnomalibModel:
     def __init__(self, ckpt_path: str):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Try loading as Padim, then fallback to Patchcore
-        try:
-            self.model = Padim.load_from_checkpoint(ckpt_path).to(self.device).eval()
-        except Exception:
-            try:
-                self.model = Patchcore.load_from_checkpoint(ckpt_path).to(self.device).eval()
-            except Exception as e:
-                print(f"Failed to load {ckpt_path} as Padim or Patchcore. Error: {e}")
-                raise ValueError(f"Unsupported model architecture: {ckpt_path}")
+        self._patch_anomalib_checkpoint_compatibility()
+        self.model = self._load_model(ckpt_path)
         
         # Preprocessing (Exact Match to CLI/PredictDataset)
         self.transform = v2.Compose([
@@ -153,3 +146,49 @@ class JerryScanAnomalibModel:
     def _encode(self, img):
         _, buffer = cv2.imencode('.jpg', img)
         return f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}"
+
+    def _load_model(self, ckpt_path: str):
+        model_cls = self._detect_model_class(ckpt_path)
+        if model_cls is not None:
+            return model_cls.load_from_checkpoint(
+                ckpt_path,
+                map_location=self.device,
+                weights_only=False,
+            ).to(self.device).eval()
+
+        errors = []
+        for fallback_cls in (Padim, Patchcore):
+            try:
+                return fallback_cls.load_from_checkpoint(
+                    ckpt_path,
+                    map_location=self.device,
+                    weights_only=False,
+                ).to(self.device).eval()
+            except Exception as e:
+                errors.append(f"{fallback_cls.__name__}: {e}")
+
+        print(f"Failed to load {ckpt_path} as Padim or Patchcore. Errors: {' | '.join(errors)}")
+        raise ValueError(f"Unsupported model architecture: {ckpt_path}")
+
+    def _detect_model_class(self, ckpt_path: str):
+        checkpoint = torch.load(
+            ckpt_path,
+            map_location="cpu",
+            weights_only=False,
+        )
+        hparams = checkpoint.get("hyper_parameters", {})
+
+        if {"coreset_sampling_ratio", "num_neighbors"}.issubset(hparams):
+            return Patchcore
+
+        if "n_features" in hparams or "n_components" in hparams:
+            return Padim
+
+        return None
+
+    @staticmethod
+    def _patch_anomalib_checkpoint_compatibility():
+        # Older Anomalib checkpoints can reference anomalib.PrecisionType, which
+        # is no longer exported in Anomalib 2.2. The saved value behaves as text.
+        if not hasattr(anomalib, "PrecisionType"):
+            anomalib.PrecisionType = str

@@ -10,7 +10,7 @@
             "id": "default-streak",
             "name": "Failure Streak",
             "type": "consecutive_fails",
-            "threshold": 1,
+            "threshold": 3,
             "emails": [
                 "roysegev10@gmail.com"
             ],
