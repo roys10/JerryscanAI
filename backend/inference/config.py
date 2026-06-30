@@ -15,10 +15,13 @@ SMTP_ENV_VARS = {
     "password": "SMTP_PASSWORD",
 }
 
+# Baseline SMTP settings used when nothing else provides a value. The user
+# defaults to the project's sending account; the password is intentionally
+# empty and must come from the environment.
 DEFAULT_SMTP = {
     "server": "smtp.gmail.com",
     "port": 587,
-    "user": "",
+    "user": "jerryscan.ai@gmail.com",
     "password": "",
 }
 
@@ -39,9 +42,9 @@ class ConfigManager:
         load_dotenv(os.path.join(base_dir, ".env"))
         self.config_path = os.path.join(base_dir, config_path)
 
-        # Default configuration (SMTP values overlaid from the environment)
+        # Default configuration (SMTP values resolved from defaults + environment)
         self.default_config = {
-            "smtp": self._smtp_from_env(dict(DEFAULT_SMTP)),
+            "smtp": self._resolve_smtp({}),
             "alerts": [
                 {
                     "id": "default-streak",
@@ -58,18 +61,25 @@ class ConfigManager:
         self.config = self._load()
 
     @staticmethod
-    def _smtp_from_env(smtp: Dict[str, Any]) -> Dict[str, Any]:
-        """Overlay SMTP settings with environment variables when present.
+    def _resolve_smtp(smtp_from_file: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve SMTP settings with precedence: defaults < file < environment.
 
-        Environment variables win over file/UI values so credentials can be
-        supplied securely at runtime instead of being committed to disk.
+        Empty/None values from the file are treated as "unset" so the defaults
+        (e.g. the sending account) still apply. Environment variables always
+        win, allowing credentials to be supplied securely at runtime.
         """
-        result = dict(smtp)
+        resolved = dict(DEFAULT_SMTP)
+
+        for field, value in (smtp_from_file or {}).items():
+            if value not in (None, ""):
+                resolved[field] = value
+
         for field, env_name in SMTP_ENV_VARS.items():
             value = os.getenv(env_name)
             if value:
-                result[field] = int(value) if field == "port" else value
-        return result
+                resolved[field] = int(value) if field == "port" else value
+
+        return resolved
 
     def _load(self) -> Dict[str, Any]:
         """Loads configuration from disk, creating defaults if missing."""
@@ -84,8 +94,8 @@ class ConfigManager:
                 merged = self.default_config.copy()
                 merged.update(data)
 
-                # Environment variables are the source of truth for SMTP settings
-                merged["smtp"] = self._smtp_from_env(merged.get("smtp", {}))
+                # Resolve SMTP last so env/defaults apply over the file's values
+                merged["smtp"] = self._resolve_smtp(data.get("smtp", {}))
 
                 return merged
         except Exception as e:
@@ -117,7 +127,7 @@ class ConfigManager:
         """Updates settings and persists them to disk."""
         # Update our in-memory config with whatever the frontend sent
         self.config.update(new_settings)
-        # Re-apply env precedence so UI input can't override env-supplied creds
-        self.config["smtp"] = self._smtp_from_env(self.config.get("smtp", {}))
+        # Re-resolve SMTP so defaults/env apply and creds aren't overwritten by UI
+        self.config["smtp"] = self._resolve_smtp(self.config.get("smtp", {}))
         self._save(self.config)
         return self.config

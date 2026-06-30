@@ -2,7 +2,7 @@
     "smtp": {
         "server": "smtp.gmail.com",
         "port": 587,
-        "user": ""
+        "user": "jerryscan.ai@gmail.com"
     },
     "alerts": [
         {
