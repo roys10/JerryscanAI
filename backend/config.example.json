@@ -2,8 +2,7 @@
     "smtp": {
         "server": "smtp.gmail.com",
         "port": 587,
-        "user": "jerryscan.ai@gmail.com",
-        "password": "dtzv mzjf acxt tjvd"
+        "user": "jerryscan.ai@gmail.com"
     },
     "alerts": [
         {
@@ -11,14 +10,9 @@
             "name": "Failure Streak",
             "type": "consecutive_fails",
             "threshold": 3,
-            "emails": [
-                "roysegev10@gmail.com"
-            ],
+            "emails": [],
             "webhook_url": "",
             "enabled": true
         }
-    ],
-    "alert_threshold": 1,
-    "alert_email_address": "roysegev10@gmail.com",
-    "alert_webhook_url": ""
+    ]
 }
