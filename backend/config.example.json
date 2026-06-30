@@ -1,0 +1,18 @@
+{
+    "smtp": {
+        "server": "smtp.gmail.com",
+        "port": 587,
+        "user": ""
+    },
+    "alerts": [
+        {
+            "id": "default-streak",
+            "name": "Failure Streak",
+            "type": "consecutive_fails",
+            "threshold": 3,
+            "emails": [],
+            "webhook_url": "",
+            "enabled": true
+        }
+    ]
+}
