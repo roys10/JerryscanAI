@@ -72,7 +72,7 @@ The **Model Lab** is a dedicated research environment for evaluating new models 
 
 ### Running the Lab
 ```bash
-uv run streamlit run model_lab/app.py
+uv run --extra lab streamlit run model_lab/app.py
 ```
 
 ### Dataset Setup (`test_dataset/`)

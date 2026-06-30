@@ -57,6 +57,11 @@ wandb/
 *.weights
 *.h5
 
+# --- App runtime state (machine-local, contains secrets — keep out of git) ---
+backend/config.json
+backend/inspections_history.db
+*.db
+
 # --- OS / IDE ---
 .DS_Store
 Thumbs.db

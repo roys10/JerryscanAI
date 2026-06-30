@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Dict, Any
+from dotenv import load_dotenv
 
 class ConfigManager:
     """Manages persistent system configuration via a local JSON file."""
@@ -8,6 +9,9 @@ class ConfigManager:
     def __init__(self, config_path: str = "config.json"):
         # Default to the backend directory
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        # Load environment variables from .env specifically in the backend folder
+        load_dotenv(os.path.join(base_dir, ".env"))
         self.config_path = os.path.join(base_dir, config_path)
         
         # Default configuration
@@ -16,7 +20,7 @@ class ConfigManager:
                 "server": "smtp.gmail.com",
                 "port": 587,
                 "user": "",
-                "password": ""
+                "password": os.getenv("SMTP_PASSWORD", "")
             },
             "alerts": [
                 {
@@ -45,6 +49,14 @@ class ConfigManager:
                 # For a professional system, we merge keys but prioritizing user data
                 merged = self.default_config.copy()
                 merged.update(data)
+                
+                # Override with environment variable if present
+                env_password = os.getenv("SMTP_PASSWORD")
+                if env_password:
+                    if "smtp" not in merged:
+                        merged["smtp"] = {}
+                    merged["smtp"]["password"] = env_password
+                
                 return merged
         except Exception as e:
             print(f"Error loading config: {e}. using defaults.")
