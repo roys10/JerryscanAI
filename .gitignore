@@ -59,6 +59,7 @@ wandb/
 
 # --- App runtime state (machine-local, contains secrets — keep out of git) ---
 backend/config.json
+backend/.env
 backend/inspections_history.db
 *.db
 
