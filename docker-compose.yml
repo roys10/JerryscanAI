@@ -11,6 +11,9 @@ services:
     volumes:
       - ./models:/app/models
       - ./results:/app/results
+      - ./backend/.env:/app/backend/.env:ro
+    env_file:
+      - ./backend/.env
     environment:
       - HOST=0.0.0.0
       - PORT=8000

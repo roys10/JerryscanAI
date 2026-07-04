@@ -18,17 +18,19 @@ A professional AI-powered surface defect detection system built with **FastAPI**
     uv sync
     ```
 3.  **Model Deployment (Hierarchical)**
-    The system supports multiple model sets. Create a subfolder for each set inside `models/`:
+    The backend scans the top-level `models/` directory for subfolders. Each subfolder name becomes the model set name, and every `.ckpt` file inside that folder is loaded as an angle model.
     ```
     Project/JerryscanAI/
     ├── models/
-    │   ├── Standard/
-    │   │   ├── front.ckpt
-    │   │   ├── back.ckpt
+    │   ├── model1/
+    │   │   ├── G01.ckpt
+    │   │   ├── G02.ckpt
     │   │   └── ...
-    │   └── Optimized_V2/
+    │   └── model2/
+    │       ├── G01.ckpt
     │       └── ...
     ```
+    Example: the repository already contains model sets named `Padim_v0_old` and `RembgAlignedPatchcore`; place your checkpoint files inside those folders so the backend can discover them automatically.
 4.  **Start Server Locally**:
     ```bash
     cd backend
@@ -44,7 +46,11 @@ The backend is configured for automated deployment via GitHub Actions and Docker
    - `HOST_USERNAME`: Your login username (e.g., `ubuntu`).
    - `HOST_PASSWORD`: Your login password.
    - `GHCR_PAT`: The Personal Access Token you generated (used to pull the image onto your server).
-3. **Automated Deploy**: Pushing to the `main` branch will automatically trigger the `.github/workflows/deploy.yml` action. It will build the image, push it to GHCR, connect to your server, authenticate Docker, pull the latest image, and restart the container.
+   - `SMTP_PASSWORD`: Your Gmail App Password (or email service SMTP password). The workflow will use this to populate `backend/.env` on the remote host at deploy time.
+2.  **Automated Deploy**: Pushing to the `backend-CD` branch will automatically trigger the `.github/workflows/deploy.yml` action. It will build the image, push it to GHCR, create `backend/.env` on the remote server using the `SMTP_PASSWORD` secret, connect to your server, authenticate Docker, pull the latest image, and restart the container.
+
+> The deployment uses `docker-compose.yml` and expects a `backend/.env` file on the remote host. The workflow automatically creates this file at deploy time by using the `SMTP_PASSWORD` GitHub secret. The compose file mounts `backend/.env` into the container and loads it via `env_file`, so SMTP and PORT values are available at runtime.
+
 
 Alternatively, manually deploy on your server:
 ```bash
@@ -59,12 +65,19 @@ docker compose up -d
     npm install
     ```
 2.  **Environment Setup**:
-    Create a `.env` file in `frontend/` (copy from `.env_templates`)
+    Create a `.env` file in `frontend/` by copying `frontend/.env_template` and updating `VITE_BACKEND_URL` as needed.
 
 3.  **Run Development Server**:
     ```bash
     npm run dev
     ```
+
+### 1C. Backend Environment Setup
+1.  Copy `backend/.env.example` to `backend/.env` and fill in your SMTP credentials and port.
+2.  When running local Docker or remote deployment, ensure the backend environment file is available to the container so SMTP settings are resolved correctly.
+
+> Note: The GitHub Actions deployment workflow currently pushes the Docker image and deploys `docker-compose.yml` to the remote host, but it does not automatically create `backend/.env` on the server. You must provision the remote `backend/.env` file manually or extend the workflow to populate it from secrets.
+
 
 ---
 
