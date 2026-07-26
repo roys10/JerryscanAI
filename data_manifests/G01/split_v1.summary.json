@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "manifest": "split_v1.csv",
+  "manifest_sha256": "af9bbbc73848f489063a9d07913f44287433e212e90da23fb406fbea5961bd2f",
+  "sample_count": 3991,
+  "split_counts": {
+    "test": 1000,
+    "train": 1997,
+    "val": 994
+  },
+  "date_counts": {
+    "2026-02-01": 1004,
+    "2026-02-02": 993,
+    "2026-02-03": 994,
+    "2026-02-04": 999,
+    "2026-02-05": 1
+  },
+  "label_counts": {
+    "unverified": 3991
+  },
+  "camera_angles": [
+    "G01"
+  ],
+  "source_hashes_included": true
+}

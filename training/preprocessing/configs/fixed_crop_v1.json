@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "preprocessing_id": "fixed_crop_v1",
+  "backend": "fixed_crop",
+  "crop_xyxy": [0, 0, 780, 1200],
+  "crop_basis": "conservative_bounds_from_training_u2net_mask_audit",
+  "output_size": [1024, 1024],
+  "background_value": 128,
+  "resize_policy": "contain",
+  "image_interpolation": "lanczos",
+  "input_color_policy": "grayscale_replicated_to_rgb",
+  "output_format": "png"
+}

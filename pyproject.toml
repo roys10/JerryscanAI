@@ -3,7 +3,7 @@ name = "jerryscanai"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "anomalib>=2.2.0",
     "fastapi>=0.110.0",
@@ -23,10 +23,13 @@ dependencies = [
 lab = [
     "streamlit>=1.32.0",
 ]
+preprocess-rembg = [
+    "rembg[cpu]==2.0.76",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["backend", "model_lab", "cli_predictions", "python_predictions", "standalone_scripts"]
+packages = ["backend", "model_lab", "cli_predictions", "python_predictions", "standalone_scripts", "training"]

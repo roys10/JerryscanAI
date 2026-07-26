@@ -1,0 +1,25 @@
+# Training workspace
+
+This directory contains the reproducible machine-learning workflow for
+JerryscanAI. Run commands from the repository root with Python module syntax.
+
+## Layout
+
+- `datasets/`: frozen-manifest creation and split materialization.
+- `preprocessing/`: derivative image and mask generation.
+- `preprocessing/configs/`: versioned preprocessing configurations and model registry.
+- `models/`: PatchCore and future anomaly-model training entry points.
+
+Raw captures remain immutable and outside Git. Frozen sample identities remain
+under `data_manifests/`, generated derivative datasets remain outside Git, and
+trained checkpoints remain under the ignored `models/` artifact directory.
+
+The normal execution order is:
+
+1. Create or verify a frozen dataset manifest.
+2. Generate and audit a complete preprocessing dataset.
+3. Dry-run training against the derivative dataset.
+4. Train the model and record its experiment metadata.
+
+See `docs/preprocessing.md` and `docs/model-development.md` for the controlled
+experiment protocol.

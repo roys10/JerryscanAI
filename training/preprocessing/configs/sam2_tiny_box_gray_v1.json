@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "preprocessing_id": "sam2_tiny_box_gray_v1",
+  "backend": "sam2",
+  "model_name": "sam2.1_hiera_tiny",
+  "checkpoint": "models/preprocessing/sam2/sam2.1_hiera_tiny.pt",
+  "expected_model_sha256": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+  "model_config": "configs/sam2.1/sam2.1_hiera_t.yaml",
+  "device": "auto",
+  "box_prompt_xyxy": [10, 10, 770, 1190],
+  "prompt_basis": "conservative_training_u2net_bbox_envelope",
+  "multimask_output": true,
+  "output_size": [1024, 1024],
+  "background_value": 128,
+  "input_color_policy": "grayscale_replicated_to_rgb",
+  "mask_threshold": 128,
+  "mask_dilation_px": 0,
+  "valid_mask_area_ratio": [0.2, 0.85],
+  "fail_on_quality_flags": [
+    "no_candidate_in_area_range",
+    "mask_area_out_of_range"
+  ],
+  "keep_largest_component": true,
+  "preserve_mask_holes": true,
+  "bbox_padding_ratio": 0.01,
+  "object_scale": 0.9,
+  "object_center": [0.5, 0.48],
+  "image_interpolation": "lanczos",
+  "mask_interpolation": "nearest",
+  "composite_mode": "hard_gray",
+  "output_format": "png"
+}

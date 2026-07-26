@@ -23,6 +23,8 @@ share/python-wheels/
 MANIFEST
 .env
 .venv
+.uv-cache/
+tmp/
 env/
 venv/
 ENV/
@@ -45,6 +47,7 @@ frontend/.env.production.local
 # --- ML / Data ---
 data/
 datasets/
+training_data/
 results/
 runs/
 lightning_logs/

@@ -70,6 +70,11 @@ docker compose up -d
 
 The **Model Lab** is a dedicated research environment for evaluating new models (Padim/Patchcore) and comparing performance metrics side-by-side.
 
+Model research must use the frozen, manifest-driven split and evaluation rules in [docs/model-development.md](docs/model-development.md). Agent and contributor guardrails are defined in [AGENTS.md](AGENTS.md).
+Preprocessing models and derivative datasets follow [docs/preprocessing.md](docs/preprocessing.md); PatchCore training begins only after a variant passes that audit.
+The reproducible dataset, preprocessing, and model-training entry points live
+under [training/](training/README.md).
+
 ### Running the Lab
 ```bash
 uv run --extra lab streamlit run model_lab/app.py
@@ -112,6 +117,7 @@ test_dataset/
 -   `backend/inference/`: AI logic, history persistence, and model management.
 -   `frontend/`: React application (Live Dashboard & History).
 -   `model_lab/`: Streamlit-based benchmarking and evaluation suite.
+-   `training/`: Dataset manifests, preprocessing generators, and model-training workflows.
 -   `models/`: Storage for versioned `.ckpt` weight files.
 -   `test_dataset/`: Angle-aware directory for model evaluation.
 -   `test_images/`: Samples for end-to-end system simulation.

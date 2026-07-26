@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "models": [
+    {
+      "id": "rembg_u2net",
+      "status": "imported",
+      "framework": "rembg",
+      "framework_version": "2.0.76",
+      "model_name": "u2net",
+      "artifact": "models/preprocessing/rembg/u2net.onnx",
+      "sha256": "8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491",
+      "source": "https://github.com/danielgatis/rembg",
+      "license_review": "rembg MIT; U2-Net official repository Apache-2.0"
+    },
+    {
+      "id": "rembg_isnet_general",
+      "status": "imported_smoke_test_failed_mask_quality",
+      "framework": "rembg",
+      "framework_version": "2.0.76",
+      "model_name": "isnet-general-use",
+      "artifact": "models/preprocessing/rembg/isnet-general-use.onnx",
+      "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+      "source": "https://github.com/xuebinqin/DIS",
+      "license_review": "official DIS/IS-Net code Apache-2.0; exact rembg release weight is pinned by hash",
+      "qa_note": "A 10-image train/validation smoke test produced multiple-component warnings on 4/10 samples. Manual review found intermittent white-background intrusion inside the handle opening, so full dataset generation is blocked pending a revised mask rule or rejection of this variant."
+    },
+    {
+      "id": "sam2_1_hiera_tiny",
+      "status": "checkpoint_imported_runtime_pending",
+      "framework": "SAM 2",
+      "framework_version": null,
+      "model_name": "sam2.1_hiera_tiny",
+      "artifact": "models/preprocessing/sam2/sam2.1_hiera_tiny.pt",
+      "sha256": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+      "source": "https://github.com/facebookresearch/sam2",
+      "license_review": "official code and checkpoint Apache-2.0; use WSL/Linux per official installation guidance"
+    },
+    {
+      "id": "yolo_jerrycan_seg_v1",
+      "status": "blocked_on_reviewed_labels_and_license_choice",
+      "framework": "Ultralytics YOLO",
+      "framework_version": null,
+      "model_name": null,
+      "artifact": null,
+      "sha256": null,
+      "source": "https://docs.ultralytics.com/tasks/segment",
+      "license_review": "choose AGPL-3.0 compliance or an Ultralytics Enterprise license before production use"
+    }
+  ]
+}
