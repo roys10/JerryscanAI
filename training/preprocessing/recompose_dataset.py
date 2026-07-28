@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from training.datasets.create_dataset_manifest import sha256_file
+from training.datasets.create_dataset_manifest import sha256_file, sha256_manifest
 from training.datasets.materialize_dataset_split import load_manifest_rows
 from training.preprocessing.preprocess_dataset import (
     DERIVATIVE_FIELDS,
@@ -54,7 +54,7 @@ def verify_parent(parent_root: Path, manifest: Path, config: dict[str, Any]) -> 
     if parent_summary.get("preprocessing_id") != expected_parent_id or parent_summary.get("config_sha256") != expected_parent_config_hash:
         raise ValueError("Parent summary metadata does not match parent config")
     frozen_rows = {row.sample_id: row for row in load_manifest_rows(manifest)}
-    parent_manifest_hash = sha256_file(manifest)
+    parent_manifest_hash = sha256_manifest(manifest)
     rows = read_derivative_manifest(parent_manifest_path)
     if len(rows) != len(frozen_rows) or len({row.get("parent_sample_id") for row in rows}) != len(rows):
         raise ValueError("Parent derivative does not contain exactly the frozen sample identities")
@@ -169,7 +169,7 @@ def main() -> int:
             write_derivative_manifest(checkpoint, rows); print(f"Recomposited {index}/{len(parent_rows)}", flush=True)
     write_derivative_manifest(checkpoint, rows); write_derivative_manifest(partial_output / "derivative_manifest.csv", rows)
     statuses = Counter(row["status"] for row in rows)
-    summary = {"preprocessing_id": preprocessing_id, "parent_preprocessing_id": config["parent_preprocessing_id"], "parent_manifest_sha256": sha256_file(manifest), "parent_config_sha256": config["parent_config_sha256"], "config_sha256": config_hash, "sample_count": len(rows), "split_counts": dict(Counter(row["split"] for row in rows)), "status_counts": dict(statuses), "quality_flag_counts": {}}
+    summary = {"preprocessing_id": preprocessing_id, "parent_preprocessing_id": config["parent_preprocessing_id"], "parent_manifest_sha256": sha256_manifest(manifest), "parent_config_sha256": config["parent_config_sha256"], "config_sha256": config_hash, "sample_count": len(rows), "split_counts": dict(Counter(row["split"] for row in rows)), "status_counts": dict(statuses), "quality_flag_counts": {}}
     (partial_output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     if statuses.get("error", 0):
         print(f"Recomposition failed for {statuses['error']} samples: {partial_output}"); return 1

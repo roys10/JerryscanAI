@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import importlib.metadata
 import json
 import subprocess
@@ -12,6 +11,8 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+
+from training.datasets.create_dataset_manifest import sha256_manifest
 
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
@@ -23,14 +24,6 @@ def parse_layers(value: str) -> tuple[str, ...]:
     if not layers:
         raise argparse.ArgumentTypeError("At least one layer is required.")
     return layers
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def manifest_split_ids(manifest: Path) -> dict[str, set[str]]:
@@ -110,7 +103,7 @@ def validate_materialized_dataset(
             raise ValueError(f"{split} does not match manifest: {'; '.join(details)}")
 
     counts = {split: len(expected[split]) for split in REQUIRED_SPLITS}
-    return folders, counts, sha256_file(manifest)
+    return folders, counts, sha256_manifest(manifest)
 
 
 def build_parser() -> argparse.ArgumentParser:

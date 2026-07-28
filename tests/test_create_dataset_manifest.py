@@ -10,10 +10,21 @@ from training.datasets.create_dataset_manifest import (
     main,
     materialize,
     parse_capture_filename,
+    sha256_manifest,
 )
 
 
 class DatasetManifestTests(unittest.TestCase):
+    def test_manifest_hash_is_stable_across_line_endings(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            lf = root / "lf.csv"
+            crlf = root / "crlf.csv"
+            lf.write_bytes(b"sample_id,split\nG01-001,train\n")
+            crlf.write_bytes(b"sample_id,split\r\nG01-001,train\r\n")
+
+            self.assertEqual(sha256_manifest(lf), sha256_manifest(crlf))
+
     def test_parse_capture_filename(self):
         angle, captured_at, sequence = parse_capture_filename(
             Path("G01-260203-091625-674.bmp")

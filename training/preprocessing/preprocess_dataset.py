@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from training.datasets.create_dataset_manifest import sha256_file
+from training.datasets.create_dataset_manifest import sha256_file, sha256_manifest
 from training.datasets.materialize_dataset_split import load_manifest_rows
 
 
@@ -387,7 +387,7 @@ def main() -> int:
         return 1
 
     parent_rows = load_manifest_rows(manifest)
-    parent_manifest_hash = sha256_file(manifest)
+    parent_manifest_hash = sha256_manifest(manifest)
     config_hash = canonical_json_hash(config)
     checkpoint_manifest = partial_output / "derivative_manifest.partial.csv"
     created_partial = not partial_output.exists()

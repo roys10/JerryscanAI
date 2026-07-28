@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from training.datasets.create_dataset_manifest import build_rows, sha256_file, write_manifest
+from training.datasets.create_dataset_manifest import (
+    build_rows,
+    sha256_file,
+    sha256_manifest,
+    write_manifest,
+)
 from training.preprocessing.preprocess_dataset import canonical_json_hash, write_derivative_manifest
 from training.preprocessing.recompose_dataset import main, recompose, verify_parent
 
@@ -27,7 +32,7 @@ class RecomposeDatasetTests(unittest.TestCase):
         mask = Image.new("L", (4, 3), 0); mask.putpixel((1, 1), 255); mask.save(mask_path)
         parent_config = {"preprocessing_id": "rembg_u2net_gray_v1", "backend": "rembg"}; parent_hash = canonical_json_hash(parent_config)
         (parent / "preprocessing_config.json").write_text(json.dumps(parent_config)); (parent / "summary.json").write_text(json.dumps({"preprocessing_id": "rembg_u2net_gray_v1", "config_sha256": parent_hash}))
-        row = {"schema_version": "1.0", "parent_sample_id": frozen[0].sample_id, "split": "train", "label": "normal", "source_relpath": frozen[0].source_relpath, "source_sha256": frozen[0].source_sha256, "parent_manifest_sha256": sha256_file(manifest), "preprocessing_id": "rembg_u2net_gray_v1", "config_sha256": parent_hash, "backend": "rembg", "backend_version": "x", "model_name": "u2net", "model_sha256": "x", "output_relpath": "train/normal/G01-260201-120000-001.png", "output_sha256": sha256_file(image_path), "mask_relpath": "masks/train/normal/G01-260201-120000-001.png", "mask_sha256": sha256_file(mask_path), "status": "ok", "width": "4", "height": "3", "channels": "3", "processing_ms": "1", "mask_area_ratio": "", "component_count": "", "model_score": "", "bbox_xyxy": "", "quality_flags": "", "error": ""}
+        row = {"schema_version": "1.0", "parent_sample_id": frozen[0].sample_id, "split": "train", "label": "normal", "source_relpath": frozen[0].source_relpath, "source_sha256": frozen[0].source_sha256, "parent_manifest_sha256": sha256_manifest(manifest), "preprocessing_id": "rembg_u2net_gray_v1", "config_sha256": parent_hash, "backend": "rembg", "backend_version": "x", "model_name": "u2net", "model_sha256": "x", "output_relpath": "train/normal/G01-260201-120000-001.png", "output_sha256": sha256_file(image_path), "mask_relpath": "masks/train/normal/G01-260201-120000-001.png", "mask_sha256": sha256_file(mask_path), "status": "ok", "width": "4", "height": "3", "channels": "3", "processing_ms": "1", "mask_area_ratio": "", "component_count": "", "model_score": "", "bbox_xyxy": "", "quality_flags": "", "error": ""}
         write_derivative_manifest(parent / "derivative_manifest.csv", [row])
         return manifest, parent, parent_hash
 

@@ -46,7 +46,7 @@ frontend/.env.production.local
 
 # --- ML / Data ---
 data/
-datasets/
+/datasets/
 training_data/
 results/
 runs/

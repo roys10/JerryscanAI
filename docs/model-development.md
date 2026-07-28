@@ -22,7 +22,7 @@ Confirmed on 2026-07-06:
 - Adjacent captures are expected to represent different jerrycans.
 - The isolated 2026-02-05 image used the same camera/setup.
 
-The current `split_v2.csv` therefore uses `label=normal`. It contains 3,991 unique source hashes and has SHA-256 `0fab56bc5aa7034763430617af10d3e8d9aea2aa7e137fb865458fcc13168512`. A deterministic 750-image audit found closely overlapping intensity histograms across splits and no missing, resized, or sampled hash-mismatched files. Validation/test retain moderate spatial variation between capture days, which is desirable for measuring future-session robustness rather than near-duplicate memorization.
+The current `split_v2.csv` therefore uses `label=normal`. It contains 3,991 unique source hashes and has canonical manifest SHA-256 `0fab56bc5aa7034763430617af10d3e8d9aea2aa7e137fb865458fcc13168512`; the manifest hash normalizes CSV line endings so Windows and Linux record the same experiment identity. A deterministic 750-image audit found closely overlapping intensity histograms across splits and no missing, resized, or sampled hash-mismatched files. Validation/test retain moderate spatial variation between capture days, which is desirable for measuring future-session robustness rather than near-duplicate memorization.
 
 Open metadata questions remain: whether capture days correspond to different lots/shifts or camera adjustments, and whether filename timestamps are reliable local camera time.
 
