@@ -57,6 +57,8 @@ class TrainPatchcoreDatasetTests(unittest.TestCase):
         self.assertIn('"--force-reinstall", "--no-deps"', source)
         self.assertIn('"opencv-python-headless==4.13.0.92"', source)
         self.assertIn('cv2.getBuildInformation()', source)
+        self.assertIn('"pandas==2.3.3"', source)
+        self.assertIn('pd.__version__ == "2.3.3"', source)
 
     def test_training_module_resolves_repository_root(self):
         project_root = Path(train_patchcore.__file__).resolve().parents[2]

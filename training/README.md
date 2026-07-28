@@ -31,7 +31,8 @@ uploading the approved derivative datasets to persistent storage. The platform
 must provide a compatible CUDA-enabled PyTorch and torchvision pair; the
 notebook preserves those hardware-specific packages, pins the rest of the
 training stack, replaces Anomalib's GUI OpenCV dependency with the pinned
-headless build, records `pip freeze`, verifies CUDA and OpenCV, dry-runs every
-selected dataset against `split_v2.csv`, and calls the canonical
+headless build, pins Pandas below 3 for Anomalib 2.2 compatibility, records
+`pip freeze`, verifies CUDA, OpenCV, and Pandas, dry-runs every selected dataset
+against `split_v2.csv`, and calls the canonical
 `training.models.train_patchcore` module. Only data/output paths should normally
 change between the college server, Lightning.ai, and another GPU provider.
