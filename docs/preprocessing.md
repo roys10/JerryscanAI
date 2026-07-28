@@ -19,6 +19,7 @@ The preprocessing model may use train and validation data for configuration. The
 |---|---|---|
 | `raw_letterbox_v1` | Complete | Model-free aspect-ratio-preserving control |
 | `rembg_u2net_gray_v1` | Complete | Existing-method equivalent with pinned U²-Net and reproducible masks |
+| `rembg_u2net_black_v1` | Complete | Black-background recomposition of the completed aligned U²-Net derivative; no U²-Net rerun |
 | `rembg_isnet_gray_v1` | Full run blocked by smoke-test QA | Newer rembg model retained as a documented rejected/pending variant |
 | `fixed_crop_v1` | Complete | Model-free conservative crop based on training-mask bounds |
 | `sam2_tiny_box_gray_v1` | Checkpoint/config prepared; Linux runtime unavailable locally | SAM 2.1 tiny with one frozen box prompt for G01 |
@@ -87,6 +88,24 @@ Generate a variant:
 ```
 
 If a long run is interrupted, repeat the command with `--resume`. Never delete the source dataset or reuse a preprocessing ID with changed settings.
+
+Create the controlled black-background counterpart without re-running U²-Net:
+
+```powershell
+python -m training.preprocessing.recompose_dataset `
+  --parent-root E:\LearningProjects\AI\JerryscanAI\training_data\derived\G01\rembg_u2net_gray_v1 `
+  --manifest data_manifests\G01\split_v2.csv `
+  --config training\preprocessing\configs\rembg_u2net_black_v1.json `
+  --output-root E:\LearningProjects\AI\JerryscanAI\training_data\derived\G01
+```
+
+The recomposer verifies the completed parent contract, parent metadata, frozen
+split identities, and every parent output/mask hash before recomposition. It
+retains foreground RGB values where the aligned binary mask is at least 128
+and writes RGB zero elsewhere. Masks are hardlinked when possible (otherwise
+copied), and the new dataset is written to `.partial` then promoted atomically
+only when every sample succeeds. Use `--resume` only with the matching partial
+directory; a changed configuration or parent needs a new preprocessing ID.
 
 ## SAM 2.1 workflow
 

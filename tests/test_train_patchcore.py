@@ -1,12 +1,41 @@
 import csv
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from training.models import train_patchcore
 from training.models.train_patchcore import validate_materialized_dataset
 
 
 class TrainPatchcoreDatasetTests(unittest.TestCase):
+    def test_cloud_training_notebook_code_cells_compile(self):
+        project_root = Path(train_patchcore.__file__).resolve().parents[2]
+        notebook_paths = [
+            project_root / "training" / "models" / "train-patchcore_notebook.ipynb"
+        ]
+        for notebook_path in notebook_paths:
+            with self.subTest(notebook=notebook_path.name):
+                notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+                code_cells = [
+                    cell
+                    for cell in notebook["cells"]
+                    if cell["cell_type"] == "code"
+                ]
+
+                self.assertGreaterEqual(len(code_cells), 5)
+                for index, cell in enumerate(code_cells):
+                    compile(
+                        "".join(cell["source"]),
+                        f"{notebook_path.name}:cell{index}",
+                        "exec",
+                    )
+
+    def test_training_module_resolves_repository_root(self):
+        project_root = Path(train_patchcore.__file__).resolve().parents[2]
+        self.assertTrue((project_root / "pyproject.toml").is_file())
+        self.assertTrue((project_root / "training").is_dir())
+
     def create_dataset(self, root: Path) -> Path:
         manifest = root / "split.csv"
         rows = []

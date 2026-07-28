@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "preprocessing_id": "rembg_u2net_black_v1",
+  "backend": "aligned_mask_recompose",
+  "parent_preprocessing_id": "rembg_u2net_gray_v1",
+  "parent_config_sha256": "6b34c887722a1dc8df6821f13b11909a7d024c46a3ae7d750308c121d17e1601",
+  "background_value": 0,
+  "mask_threshold": 128,
+  "mask_materialization": "hardlink",
+  "composite_mode": "hard_black_from_aligned_binary_mask",
+  "output_format": "png"
+}

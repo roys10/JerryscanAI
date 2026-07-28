@@ -288,7 +288,7 @@ def main() -> int:
     engine.fit(model=model, datamodule=datamodule)
     engine.trainer.save_checkpoint(output_ckpt)
 
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     metadata = {
         "schema_version": "1.0",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
