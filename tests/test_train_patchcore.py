@@ -3,9 +3,17 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
+
+import torch
+from anomalib.data import ImageBatch
 
 from training.datasets.create_dataset_manifest import sha256_manifest
 from training.models import train_patchcore
+from training.models.cpu_offload_patchcore import (
+    build_coreset_from_cpu_embeddings,
+    offload_latest_embedding,
+)
 from training.models.train_patchcore import validate_materialized_dataset
 
 
@@ -59,6 +67,74 @@ class TrainPatchcoreDatasetTests(unittest.TestCase):
         self.assertIn('cv2.getBuildInformation()', source)
         self.assertIn('"pandas==2.3.3"', source)
         self.assertIn('pd.__version__ == "2.3.3"', source)
+        self.assertIn('EMBEDDING_STORAGE = "cpu"', source)
+        self.assertIn('"--embedding-storage", EMBEDDING_STORAGE', source)
+        self.assertIn("EVAL_BATCH_SIZE = 1", source)
+        self.assertIn('"--eval-batch-size", EVAL_BATCH_SIZE', source)
+
+    def test_embedding_offload_detaches_and_preserves_values(self):
+        source = torch.tensor([[1.0, 2.0]], requires_grad=True)
+        store = [source]
+
+        offload_latest_embedding(store)
+
+        self.assertEqual(store[0].device.type, "cpu")
+        self.assertFalse(store[0].requires_grad)
+        self.assertTrue(torch.equal(store[0], source.detach()))
+
+    def test_cpu_embeddings_are_consolidated_before_standard_coreset(self):
+        store = [
+            torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+            torch.tensor([[5.0, 6.0]]),
+        ]
+        selected = torch.tensor([[3.0, 4.0]])
+
+        with patch(
+            "training.models.cpu_offload_patchcore.KCenterGreedy"
+        ) as sampler_class:
+            sampler_class.return_value.sample_coreset.return_value = selected
+            result = build_coreset_from_cpu_embeddings(
+                embedding_store=store,
+                sampling_ratio=0.1,
+                target_device=torch.device("cpu"),
+            )
+
+        self.assertEqual(store, [])
+        self.assertTrue(torch.equal(result, selected))
+        sampler_class.assert_called_once()
+        embedding = sampler_class.call_args.kwargs["embedding"]
+        self.assertTrue(
+            torch.equal(
+                embedding,
+                torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
+            )
+        )
+        self.assertEqual(sampler_class.call_args.kwargs["sampling_ratio"], 0.1)
+
+    def test_cpu_offload_patchcore_smoke(self):
+        from training.models.cpu_offload_patchcore import CpuOffloadPatchcore
+
+        torch.manual_seed(42)
+        model = CpuOffloadPatchcore(
+            backbone="resnet18",
+            layers=("layer2", "layer3"),
+            pre_trained=False,
+            coreset_sampling_ratio=0.1,
+            num_neighbors=1,
+        )
+        model.train()
+        batch = ImageBatch(
+            image=torch.randn(2, 3, 32, 32),
+            image_path=["normal-1.png", "normal-2.png"],
+        )
+
+        model.training_step(batch)
+        self.assertEqual(model.model.embedding_store[0].device.type, "cpu")
+        model.fit()
+
+        self.assertEqual(model.model.embedding_store, [])
+        self.assertGreater(model.model.memory_bank.shape[0], 0)
+        self.assertEqual(model.model.memory_bank.device.type, "cpu")
 
     def test_training_module_resolves_repository_root(self):
         project_root = Path(train_patchcore.__file__).resolve().parents[2]

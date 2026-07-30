@@ -36,3 +36,22 @@ headless build, pins Pandas below 3 for Anomalib 2.2 compatibility, records
 against `split_v2.csv`, and calls the canonical
 `training.models.train_patchcore` module. Only data/output paths should normally
 change between the college server, Lightning.ai, and another GPU provider.
+
+The notebook enables `--embedding-storage cpu`. Standard Anomalib PatchCore
+retains the complete pre-coreset embedding pool on the accelerator and briefly
+duplicates it during concatenation. The CPU-offload implementation moves each
+float32 batch embedding to system RAM immediately, consolidates the pool there,
+clears cached CUDA allocations, and then runs the unchanged Anomalib
+`KCenterGreedy` selection on the accelerator. This preserves the model inputs
+and coreset algorithm while trading additional system RAM and transfer time for
+lower peak VRAM. G01 at 256 px is expected to need roughly 24 GiB of available
+system RAM during CPU concatenation; record actual peak RAM and VRAM for every
+platform run.
+
+The portable notebook also uses evaluation batch size 1 while retaining
+training batch size 8. Evaluation constructs a patch-to-memory-bank distance
+matrix whose temporary VRAM grows with evaluation batch size and the final
+coreset. Batch size changes execution memory and throughput, not the samples,
+features, or saved memory bank. Successful metadata records both batch sizes,
+fit wall time, peak process RSS, peak CUDA allocated/reserved memory, and
+hardware identity.

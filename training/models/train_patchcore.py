@@ -6,8 +6,11 @@ import argparse
 import csv
 import importlib.metadata
 import json
+import os
+import platform
 import subprocess
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,6 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--image-size", default=256, type=int)
     parser.add_argument("--batch-size", default=8, type=int)
+    parser.add_argument(
+        "--eval-batch-size",
+        default=None,
+        type=int,
+        help="Validation batch size; defaults to --batch-size.",
+    )
     parser.add_argument("--num-workers", default=0, type=int)
     parser.add_argument(
         "--accelerator",
@@ -146,6 +155,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--layers", default=("layer2", "layer3"), type=parse_layers)
     parser.add_argument("--coreset-sampling-ratio", default=0.1, type=float)
     parser.add_argument("--num-neighbors", default=9, type=int)
+    parser.add_argument(
+        "--embedding-storage",
+        choices=("device", "cpu"),
+        default="device",
+        help=(
+            "Temporary pre-coreset embedding storage. Use cpu when the complete "
+            "float32 embedding pool does not fit in GPU memory."
+        ),
+    )
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--results-dir", default=Path("results"), type=Path)
     parser.add_argument("--models-dir", default=Path("models"), type=Path)
@@ -190,6 +208,25 @@ def package_version(name: str) -> str | None:
         return None
 
 
+def total_system_memory_bytes() -> int | None:
+    """Return total system RAM on platforms that expose POSIX sysconf."""
+    try:
+        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def peak_process_rss_bytes() -> int | None:
+    """Return peak process resident memory when the resource module is available."""
+    try:
+        import resource
+
+        peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        return peak if sys.platform == "darwin" else peak * 1024
+    except (ImportError, OSError, ValueError):
+        return None
+
+
 def main() -> int:
     args = build_parser().parse_args()
     dataset_root = args.dataset_root.resolve()
@@ -205,8 +242,17 @@ def main() -> int:
     if not 0 < args.coreset_sampling_ratio <= 1:
         print("--coreset-sampling-ratio must be in (0, 1]")
         return 1
-    if args.image_size <= 0 or args.batch_size <= 0 or args.num_neighbors <= 0:
-        print("Image size, batch size, and number of neighbors must be positive")
+    eval_batch_size = args.eval_batch_size or args.batch_size
+    if (
+        args.image_size <= 0
+        or args.batch_size <= 0
+        or eval_batch_size <= 0
+        or args.num_neighbors <= 0
+    ):
+        print(
+            "Image size, training/evaluation batch sizes, and number of "
+            "neighbors must be positive"
+        )
         return 1
 
     output_dir = (args.models_dir / args.model_set).resolve()
@@ -236,6 +282,13 @@ def main() -> int:
     from anomalib.models import Patchcore
     from lightning import seed_everything
 
+    if args.embedding_storage == "cpu":
+        from training.models.cpu_offload_patchcore import CpuOffloadPatchcore
+
+        patchcore_class = CpuOffloadPatchcore
+    else:
+        patchcore_class = Patchcore
+
     seed_everything(args.seed, workers=True)
     accelerator = args.accelerator
     if accelerator == "auto":
@@ -243,11 +296,13 @@ def main() -> int:
     print(f"Accelerator: {accelerator}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"Pre-coreset embedding storage: {args.embedding_storage}")
+    print(f"Training batch size: {args.batch_size}; evaluation batch size: {eval_batch_size}")
 
     pre_processor = Patchcore.configure_pre_processor(
         image_size=(args.image_size, args.image_size)
     )
-    model = Patchcore(
+    model = patchcore_class(
         backbone=args.backbone,
         layers=args.layers,
         pre_trained=True,
@@ -264,7 +319,7 @@ def main() -> int:
         normal_dir=folders["train"],
         normal_test_dir=folders["val"],
         train_batch_size=args.batch_size,
-        eval_batch_size=args.batch_size,
+        eval_batch_size=eval_batch_size,
         num_workers=args.num_workers,
         test_split_mode=TestSplitMode.FROM_DIR,
         val_split_mode=ValSplitMode.SAME_AS_TEST,
@@ -278,10 +333,18 @@ def main() -> int:
         default_root_dir=args.results_dir,
         logger=False,
     )
+    uses_cuda = accelerator == "gpu" and torch.cuda.is_available()
+    if uses_cuda:
+        torch.cuda.reset_peak_memory_stats()
+    training_started = time.perf_counter()
     engine.fit(model=model, datamodule=datamodule)
+    training_seconds = time.perf_counter() - training_started
+    peak_cuda_allocated = torch.cuda.max_memory_allocated() if uses_cuda else None
+    peak_cuda_reserved = torch.cuda.max_memory_reserved() if uses_cuda else None
     engine.trainer.save_checkpoint(output_ckpt)
 
     project_root = Path(__file__).resolve().parents[2]
+    gpu_properties = torch.cuda.get_device_properties(0) if uses_cuda else None
     metadata = {
         "schema_version": "1.0",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -294,6 +357,7 @@ def main() -> int:
             "image_size": args.image_size,
             "coreset_sampling_ratio": args.coreset_sampling_ratio,
             "num_neighbors": args.num_neighbors,
+            "implementation": patchcore_class.__name__,
         },
         "dataset": {
             "root": str(dataset_root),
@@ -306,8 +370,25 @@ def main() -> int:
         "training": {
             "seed": args.seed,
             "batch_size": args.batch_size,
+            "eval_batch_size": eval_batch_size,
             "num_workers": args.num_workers,
             "accelerator": accelerator,
+            "embedding_storage": args.embedding_storage,
+            "fit_seconds": training_seconds,
+            "peak_process_rss_bytes": peak_process_rss_bytes(),
+            "peak_cuda_allocated_bytes": peak_cuda_allocated,
+            "peak_cuda_reserved_bytes": peak_cuda_reserved,
+        },
+        "hardware": {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "cpu_count": os.cpu_count(),
+            "system_memory_bytes": total_system_memory_bytes(),
+            "gpu_name": gpu_properties.name if gpu_properties else None,
+            "gpu_total_memory_bytes": (
+                gpu_properties.total_memory if gpu_properties else None
+            ),
+            "cuda_runtime": torch.version.cuda,
         },
         "software": {
             "python": sys.version,
