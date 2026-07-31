@@ -29,13 +29,20 @@ class ComparisonStore:
         self.settings = settings
         settings.ensure_writable_directories()
 
-    def create(self, config: dict[str, Any], samples: list[dict[str, Any]]) -> str:
+    def create(
+        self,
+        config: dict[str, Any],
+        samples: list[dict[str, Any]],
+        evaluation_snapshot: dict[str, Any] | None = None,
+    ) -> str:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         comparison_id = f"{stamp}-{uuid.uuid4().hex[:8]}"
         folder = self.path(comparison_id)
         folder.mkdir(parents=True)
         atomic_json(folder / "comparison.json", config)
         atomic_json(folder / "samples.json", samples)
+        if evaluation_snapshot is not None:
+            atomic_json(folder / "evaluation_snapshot.json", evaluation_snapshot)
         self.write_status(comparison_id, "queued", completed=0, total=0)
         return comparison_id
 

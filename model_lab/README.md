@@ -34,8 +34,10 @@ repository.
    checkpoint bundle.
 2. Complete any explicitly listed contract gaps. A checkpoint is never assigned
    a model family, camera angle, preprocessor, manifest, or threshold by guessing.
-3. Select one to four ready PatchCore models, the original image root, frozen
-   manifest, split, image count, and sample seed.
+3. Select one to four ready PatchCore models, one folder containing original
+   camera images, and an image count or **All**. Optionally name the comparison.
+   Keep images unlabeled for exploration, or explicitly confirm that all are
+   verified normal.
 4. Run the comparison. Models execute sequentially and results append after each
    sample, so an interrupted job can resume without repeating completed work.
 5. Review raw-score distributions, false alarms when an image threshold is
@@ -65,6 +67,21 @@ A scientifically calibrated threshold should later include its calibration
 method, source manifest/split, sample-identity hash, target FPR, and timestamp.
 With all-normal data, AUROC, F1, precision, and recall are shown as unavailable
 instead of zero.
+
+## Exploratory folders and official benchmarks
+
+The default screen is intentionally simple: choose original camera images and
+each model applies its own registered preprocessing. Model Lab recursively
+scans supported images, hashes every file, creates stable sample IDs, and saves
+the canonical internal evaluation snapshot with the comparison. A subset uses
+the hidden deterministic seed 42 unless changed under Advanced; all models
+always receive the same selected IDs. Folder names never create labels.
+
+Expand **Advanced / Official benchmark** to use an existing frozen manifest and
+split. This is the only mode that exposes locked-test semantics. A registered
+model's manifest hash identifies its training data, not the evaluation data;
+models trained on different manifests may be compared on a new folder or
+official manifest, with that difference retained as a warning.
 
 ## Production integration boundary
 

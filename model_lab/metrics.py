@@ -46,7 +46,12 @@ def calculate_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     predictions = [row.get("prediction") for row in successful]
     calibrated = successful and all(value in ("normal", "fault") for value in predictions)
-    if calibrated:
+    is_unlabeled = bool(labels) and any(label == "unlabeled" for label in labels)
+    unlabeled_reason = "Dataset is unlabeled; class and false-positive metrics require reviewed labels"
+    if is_unlabeled:
+        result["false_positives"] = _unavailable(unlabeled_reason)
+        result["false_positive_rate"] = _unavailable(unlabeled_reason)
+    elif calibrated:
         normal_rows = [row for row in successful if row["label"] == "normal"]
         if normal_rows:
             false_positives = sum(row["prediction"] == "fault" for row in normal_rows)
@@ -62,7 +67,10 @@ def calculate_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         result["false_positive_rate"] = _unavailable(reason)
 
     has_both_classes = set(labels) >= {"normal", "fault"}
-    defect_reason = "Requires both reviewed normal and fault samples"
+    defect_reason = (
+        unlabeled_reason if is_unlabeled
+        else "Requires both reviewed normal and fault samples"
+    )
     for metric in ("auroc", "f1", "precision", "recall"):
         result[metric] = _unavailable(defect_reason)
     if has_both_classes and scores.size:

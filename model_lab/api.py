@@ -81,9 +81,11 @@ class ComparisonRequest(BaseModel):
     name: str | None = None
     model_ids: list[str] = Field(min_length=1, max_length=4)
     source_root: str
-    manifest: str
+    dataset_mode: str = "exploratory_folder"
+    label_mode: str = "unlabeled"
+    manifest: str | None = None
     split: str = "val"
-    image_count: int = Field(gt=0)
+    image_count: int | None = Field(default=None, gt=0)
     seed: int = 42
     force_live_preprocessing: bool = False
     locked_test_confirmation: str | None = None

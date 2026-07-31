@@ -95,30 +95,36 @@ function Models({ models, refresh }) {
 function NewComparison({ models, onCreated }) {
   const ready = models.filter(model => model.status !== 'incomplete')
   const [selected, setSelected] = useState([])
-  const [form, setForm] = useState({ name: '', source_root: '', manifest: '', split: 'val', image_count: 50, seed: 42, force_live_preprocessing: false, locked_test_confirmation: '' })
+  const [form, setForm] = useState({ name: '', source_root: '', dataset_mode: 'exploratory_folder', label_mode: 'unlabeled', manifest: '', split: 'val', image_count: 50, all_images: true, seed: 42, force_live_preprocessing: false, locked_test_confirmation: '' })
   const [message, setMessage] = useState('')
   const toggle = id => setSelected(items => items.includes(id) ? items.filter(item => item !== id) : items.length < 4 ? [...items, id] : items)
   const submit = async event => {
-    event.preventDefault(); setMessage('Validating comparison…')
+    event.preventDefault(); setMessage('Creating a reproducible image snapshot…')
     try {
-      const result = await api('/api/comparisons', { method: 'POST', body: JSON.stringify({ ...form, model_ids: selected, image_count: Number(form.image_count), seed: Number(form.seed) }) })
+      const useAllImages = form.all_images || (form.dataset_mode === 'official_manifest' && form.split === 'test')
+      const result = await api('/api/comparisons', { method: 'POST', body: JSON.stringify({ ...form, model_ids: selected, image_count: useAllImages ? null : Number(form.image_count), seed: Number(form.seed) }) })
       onCreated(result.comparison_id)
     } catch (error) { setMessage(error.message) }
   }
-  return <section><div className="heading"><div><p className="eyebrow">New comparison</p><h2>Compare the same original cans</h2><p>Select one to four PatchCore models. Each receives its declared preprocessed representation of the same frozen sample IDs.</p></div><span className="counter">{selected.length}/4 models</span></div>
+  const official = form.dataset_mode === 'official_manifest'
+  return <section><div className="heading"><div><p className="eyebrow">New comparison</p><h2>Compare PatchCore models</h2><p>Choose original camera images; each model applies its own registered preprocessing.</p></div><span className="counter">{selected.length}/4 models</span></div>
     <form onSubmit={submit}>
       <div className="select-models">{ready.map(model => <button type="button" key={model.id} className={selected.includes(model.id) ? 'selected' : ''} onClick={() => toggle(model.id)}><span><strong>{model.display_name}</strong><small>{model.preprocessing_id}</small></span>{selected.includes(model.id) && <Check/>}</button>)}</div>
       {ready.length === 0 && <div className="empty">Register a complete PatchCore bundle first.</div>}
       <div className="panel form-grid">
+        <label>Original images folder<input required value={form.source_root} onChange={e => setForm({...form, source_root: e.target.value})} placeholder="C:\camera-images\G01" /></label>
+        <label>Images to compare<input type="number" min="1" required={!form.all_images} disabled={form.all_images || (official && form.split === 'test')} value={form.image_count} onChange={e => setForm({...form, image_count: e.target.value})} /></label>
+        <label className="check"><input type="checkbox" checked={form.all_images || (official && form.split === 'test')} disabled={official && form.split === 'test'} onChange={e => setForm({...form, all_images: e.target.checked})}/><span><strong>Use all images</strong><small>Turn this off to enter a custom amount.</small></span></label>
+        {!official && <label>Labels<select value={form.label_mode} onChange={e => setForm({...form, label_mode: e.target.value})}><option value="unlabeled">Unlabeled — scores and visual comparison only</option><option value="verified_normal">All images are verified normal</option></select></label>}
         <label>Comparison name<input value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="Optional" /></label>
-        <label>Original image root<input required value={form.source_root} onChange={e => setForm({...form, source_root: e.target.value})} placeholder="/data/raw/G01" /></label>
-        <label>Frozen manifest<input required value={form.manifest} onChange={e => setForm({...form, manifest: e.target.value})} placeholder="/repo/data_manifests/G01/split_v2.csv" /></label>
-        <label>Dataset split<select value={form.split} onChange={e => setForm({...form, split: e.target.value})}><option value="val">Validation (recommended)</option><option value="train">Train — diagnostics only</option><option value="test">Locked test</option></select></label>
-        <label>Image count<input type="number" min="1" value={form.image_count} onChange={e => setForm({...form, image_count: e.target.value})} /></label>
-        <label>Selection seed<input type="number" value={form.seed} onChange={e => setForm({...form, seed: e.target.value})} /></label>
-        {form.split === 'test' && <label className="danger-field">Type RUN LOCKED TEST<input value={form.locked_test_confirmation} onChange={e => setForm({...form, locked_test_confirmation: e.target.value})} /></label>}
-        <label className="check"><input type="checkbox" checked={form.force_live_preprocessing} onChange={e => setForm({...form, force_live_preprocessing: e.target.checked})}/><span><strong>Force live preprocessing</strong><small>Bypass verified caches and measure end-to-end time.</small></span></label>
       </div>
+      <details className="advanced"><summary>Advanced / Official benchmark</summary><div className="panel form-grid">
+        <label>Evaluation mode<select value={form.dataset_mode} onChange={e => setForm({...form, dataset_mode: e.target.value})}><option value="exploratory_folder">Exploratory folder comparison</option><option value="official_manifest">Official frozen-manifest benchmark</option></select></label>
+        <label>Selection seed<input type="number" value={form.seed} onChange={e => setForm({...form, seed: e.target.value})} /></label>
+        {official && <><label>Frozen manifest<input required value={form.manifest} onChange={e => setForm({...form, manifest: e.target.value})} placeholder="data_manifests/G01/split_v2.csv" /></label><label>Official split<select value={form.split} onChange={e => setForm({...form, split: e.target.value})}><option value="val">Validation</option><option value="train">Train diagnostics</option><option value="test">Locked final test</option></select></label></>}
+        {official && form.split === 'test' && <label className="danger-field">Type RUN LOCKED TEST<input value={form.locked_test_confirmation} onChange={e => setForm({...form, locked_test_confirmation: e.target.value})} /></label>}
+        <label className="check"><input type="checkbox" checked={form.force_live_preprocessing} onChange={e => setForm({...form, force_live_preprocessing: e.target.checked})}/><span><strong>Force live preprocessing</strong><small>Bypass verified caches and measure end-to-end time.</small></span></label>
+      </div></details>
       <div className="actions"><button className="primary large" disabled={selected.length === 0}>Run comparison <ChevronRight size={18}/></button><p>{message}</p></div>
     </form>
   </section>
@@ -141,6 +147,7 @@ function Results({ comparisons, selectedId, selectComparison }) {
     <div className="results-layout"><aside className="run-list">{comparisons.map(run => <button key={run.comparison_id} className={run.comparison_id === selectedId ? 'active' : ''} onClick={() => selectComparison(run.comparison_id)}><span><strong>{run.name}</strong><small>{run.image_count} images · seed {run.seed}</small></span><em>{run.state}</em></button>)}</aside>
       <div>{!detail ? <div className="empty">Select a saved comparison.</div> : <>
         <div className="run-header"><div><h3>{detail.config.name}</h3><p>{detail.config.split} · {detail.status.completed}/{detail.status.total || '?'} evaluations</p></div><span className={`status ${detail.status.state === 'completed' ? 'ready' : 'incomplete'}`}><Activity size={14}/>{detail.status.state}</span></div>
+        {detail.config.warnings?.map(warning => <p className="notice" key={warning}>{warning}</p>)}
         {detail.summary && Object.entries(detail.summary).map(([modelId, summary]) => <article className="summary" key={modelId}><h3>{modelId}</h3>{summary.excluded_unpaired_count > 0 && <p className="error">Incomplete paired coverage: {summary.excluded_unpaired_count} samples excluded. Resume to retry errors.</p>}<div className="metric-grid"><Metric label="Paired samples" value={summary.paired_sample_count}/><Metric label="False-positive rate" value={metricText(summary.false_positive_rate, true)} note={summary.false_positive_rate.reason}/><Metric label="Median raw score" value={summary.raw_score?.median.toFixed(5) ?? 'N/A'}/><Metric label="p99 raw score" value={summary.raw_score?.p99.toFixed(5) ?? 'N/A'}/><Metric label="p95 total latency" value={summary.total_ms ? `${summary.total_ms.p95.toFixed(1)} ms` : 'N/A'}/><Metric label="AUROC" value={metricText(summary.auroc)} note={summary.auroc.reason}/><Metric label="Recall" value={metricText(summary.recall)} note={summary.recall.reason}/></div></article>)}
         {detail.results.length > 0 && <><div className="sample-toolbar"><label>Sample explorer<select value={sampleId || ''} onChange={e => setSampleId(e.target.value)}>{[...new Set(detail.results.map(row => row.sample_id))].map(id => <option key={id}>{id}</option>)}</select></label></div>
           <div className="original"><h4>Original camera image</h4><img src={`/api/comparisons/${selectedId}/originals/${sampleId}`} /></div>

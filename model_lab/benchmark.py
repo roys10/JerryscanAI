@@ -15,7 +15,12 @@ from training.datasets.create_dataset_manifest import sha256_file, sha256_manife
 from training.datasets.materialize_dataset_split import load_manifest_rows
 from training.preprocessing.runtime import canonical_json_hash
 
-from .datasets import safe_source_path, select_samples
+from .datasets import (
+    safe_source_path,
+    scan_exploratory_folder,
+    select_exploratory_samples,
+    select_samples,
+)
 from .metrics import calculate_metrics
 from .patchcore_adapter import PatchCoreAdapter, save_anomaly_visualization
 from .preprocessing import PreprocessingResolver
@@ -68,65 +73,124 @@ class BenchmarkEngine:
         model_ids = list(dict.fromkeys(request["model_ids"]))
         if not 1 <= len(model_ids) <= 4:
             raise ValueError("Choose between one and four distinct PatchCore models")
-        split = str(request.get("split", "val"))
-        if split == "test" and request.get("locked_test_confirmation") != "RUN LOCKED TEST":
+        mode = str(request.get("dataset_mode", "exploratory_folder"))
+        if (
+            mode == "official_manifest"
+            and request.get("split", "val") == "test"
+            and request.get("locked_test_confirmation") != "RUN LOCKED TEST"
+        ):
             raise ValueError("Locked test requires the exact confirmation: RUN LOCKED TEST")
-        if split not in {"train", "val", "test"}:
-            raise ValueError("Split must be train, val, or test")
-        manifest = Path(request["manifest"]).expanduser().resolve()
-        source_root = Path(request["source_root"]).expanduser().resolve()
-        if not source_root.is_dir():
-            raise ValueError(f"Original-image root does not exist: {source_root}")
-        manifest_hash = sha256_manifest(manifest)
         models = [self.registry.get(model_id) for model_id in model_ids]
         for model in models:
             if model["family"] != "patchcore":
                 raise ValueError("Only PatchCore is supported")
             if model["status"] == "incomplete":
                 raise ValueError(f"Model {model['id']} is incomplete: {model['issues']}")
-            if model["manifest_sha256"] != manifest_hash:
-                raise ValueError(f"Model {model['id']} was trained against another manifest")
+        model_angles = {model["angle"] for model in models}
+        if len(model_angles) != 1:
+            raise ValueError("Selected models must use the same camera angle")
+        selected_angle = next(iter(model_angles))
         snapshots = json.loads(json.dumps(models))
         for snapshot in snapshots:
             snapshot["contract_sha256"] = canonical_json_hash(snapshot)
-        if split == "test":
-            test_count = sum(row.split == "test" for row in load_manifest_rows(manifest))
-            if int(request["image_count"]) != test_count:
-                raise ValueError(
-                    f"Locked test must evaluate the full split ({test_count} images)"
-                )
-        samples = select_samples(
-            manifest,
-            split=split,
-            count=int(request["image_count"]),
-            seed=int(request.get("seed", 42)),
+        training_hashes = sorted(
+            {model["manifest_sha256"] for model in models if model.get("manifest_sha256")}
         )
-        angles = {sample["camera_angle"] for sample in samples}
-        if len(angles) != 1:
-            raise ValueError("A comparison sample set must contain exactly one camera angle")
-        selected_angle = next(iter(angles))
-        for model in models:
-            if model["angle"] != selected_angle:
-                raise ValueError(
-                    f"Model {model['id']} angle {model['angle']} does not match selected originals"
-                )
+        warnings = []
+        if len(training_hashes) > 1:
+            warnings.append("Selected models were trained from different manifests")
+
+        source_root = Path(request["source_root"]).expanduser().resolve()
+        seed = int(request.get("seed", 42))
+        requested_count = request.get("image_count")
+        if requested_count is not None:
+            requested_count = int(requested_count)
+        split = "exploratory"
+        manifest: Path | None = None
+        is_locked_test = False
+        if mode == "exploratory_folder":
+            label_mode = str(request.get("label_mode", "unlabeled"))
+            population, manifest_hash = scan_exploratory_folder(
+                source_root, camera_angle=selected_angle, label_mode=label_mode
+            )
+            samples = select_exploratory_samples(
+                population, count=requested_count, seed=seed
+            )
+            evaluation_snapshot = {
+                "schema_version": "1.0",
+                "mode": mode,
+                "manifest_sha256": manifest_hash,
+                "source_root": str(source_root),
+                "label_mode": label_mode,
+                "population": population,
+                "selected_sample_ids": [sample["sample_id"] for sample in samples],
+                "selection_seed": seed,
+                "selection_policy": (
+                    "all_sorted" if requested_count is None
+                    else "deterministic_random_without_replacement_then_sorted"
+                ),
+            }
+        elif mode == "official_manifest":
+            manifest_value = request.get("manifest")
+            if not manifest_value:
+                raise ValueError("Official benchmark mode requires a frozen manifest")
+            manifest = Path(manifest_value).expanduser().resolve()
+            split = str(request.get("split", "val"))
+            if split not in {"train", "val", "test"}:
+                raise ValueError("Split must be train, val, or test")
+            is_locked_test = split == "test"
+            if is_locked_test and request.get("locked_test_confirmation") != "RUN LOCKED TEST":
+                raise ValueError("Locked test requires the exact confirmation: RUN LOCKED TEST")
+            manifest_rows = load_manifest_rows(manifest)
+            split_count = sum(row.split == split for row in manifest_rows)
+            count = split_count if requested_count is None else requested_count
+            if is_locked_test and count != split_count:
+                raise ValueError(f"Locked test must evaluate the full split ({split_count} images)")
+            manifest_hash = sha256_manifest(manifest)
+            samples = select_samples(manifest, split=split, count=count, seed=seed)
+            angles = {sample["camera_angle"] for sample in samples}
+            if len(angles) != 1:
+                raise ValueError("A comparison sample set must contain exactly one camera angle")
+            if angles != {selected_angle}:
+                raise ValueError("Official sample angle must match every selected model")
+            label_mode = "manifest_labels"
+            evaluation_snapshot = {
+                "schema_version": "1.0",
+                "mode": mode,
+                "manifest": str(manifest),
+                "manifest_sha256": manifest_hash,
+                "split": split,
+                "selected_samples": samples,
+                "selection_seed": seed,
+                "selection_policy": (
+                    "all_sorted" if count == split_count
+                    else "deterministic_random_without_replacement_then_sorted"
+                ),
+            }
+        else:
+            raise ValueError("Dataset mode must be exploratory_folder or official_manifest")
         config = {
             "schema_version": "1.0",
             "name": request.get("name") or f"PatchCore comparison ({len(samples)} images)",
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "model_ids": model_ids,
             "source_root": str(source_root),
-            "manifest": str(manifest),
+            "dataset_mode": mode,
+            "manifest": str(manifest) if manifest else None,
             "manifest_sha256": manifest_hash,
             "split": split,
+            "label_mode": label_mode,
             "image_count": len(samples),
-            "seed": int(request.get("seed", 42)),
+            "seed": seed,
+            "selection_policy": evaluation_snapshot["selection_policy"],
             "force_live_preprocessing": bool(request.get("force_live_preprocessing", False)),
-            "locked_test_confirmation_recorded": split == "test",
+            "locked_test_confirmation_recorded": is_locked_test,
+            "training_manifest_sha256s": training_hashes,
+            "warnings": warnings,
             "model_contracts": snapshots,
         }
-        comparison_id = self.store.create(config, samples)
-        if split == "test":
+        comparison_id = self.store.create(config, samples, evaluation_snapshot)
+        if is_locked_test:
             lock_path = self.settings.workspace / "locked_test_record.json"
             sample_hash = hashlib.sha256(
                 "\n".join(sample["sample_id"] for sample in samples).encode()

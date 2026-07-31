@@ -6,7 +6,12 @@ import unittest
 
 from PIL import Image
 
-from model_lab.datasets import safe_source_path, select_samples
+from model_lab.datasets import (
+    safe_source_path,
+    scan_exploratory_folder,
+    select_exploratory_samples,
+    select_samples,
+)
 from model_lab.benchmark import BenchmarkEngine, paired_model_summaries
 from model_lab.metrics import calculate_metrics
 from model_lab.patchcore_adapter import PATCHCORE_TRANSFORM_CONTRACT
@@ -81,6 +86,17 @@ class ModelLabMetricTests(unittest.TestCase):
         }]
         self.assertFalse(calculate_metrics(rows)["false_positive_rate"]["available"])
 
+    def test_unlabeled_data_disables_all_class_metrics_with_clear_reason(self):
+        rows = [{
+            "status": "completed", "label": "unlabeled", "raw_image_score": 0.2,
+            "prediction": "normal", "preprocessing_ms": 1, "inference_ms": 2,
+            "total_ms": 3, "quality_flags": [],
+        }]
+        metrics = calculate_metrics(rows)
+        for name in ("false_positive_rate", "auroc", "f1", "precision", "recall"):
+            self.assertFalse(metrics[name]["available"])
+            self.assertIn("unlabeled", metrics[name]["reason"].lower())
+
 
 class ModelLabDatasetTests(unittest.TestCase):
     def test_sample_selection_is_shared_and_reproducible(self):
@@ -108,6 +124,48 @@ class ModelLabDatasetTests(unittest.TestCase):
                 [row["sample_id"] for row in first],
                 [row["sample_id"] for row in other],
             )
+
+    def test_exploratory_folder_snapshot_is_hashed_stable_and_unlabeled(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "nested").mkdir()
+            Image.new("RGB", (8, 10), "white").save(root / "b.png")
+            Image.new("RGB", (8, 10), "black").save(root / "nested" / "a.jpg")
+            first, first_hash = scan_exploratory_folder(
+                root, camera_angle="G01", label_mode="unlabeled"
+            )
+            second, second_hash = scan_exploratory_folder(
+                root, camera_angle="G01", label_mode="unlabeled"
+            )
+            self.assertEqual(first, second)
+            self.assertEqual(first_hash, second_hash)
+            self.assertEqual({row["label"] for row in first}, {"unlabeled"})
+            self.assertEqual(len({row["sample_id"] for row in first}), 2)
+            self.assertEqual(
+                select_exploratory_samples(first, count=None, seed=42), first
+            )
+            self.assertEqual(
+                select_exploratory_samples(first, count=1, seed=42),
+                select_exploratory_samples(first, count=1, seed=42),
+            )
+            Image.new("RGB", (8, 10), "red").save(root / "b.png")
+            _, changed_hash = scan_exploratory_folder(
+                root, camera_angle="G01", label_mode="unlabeled"
+            )
+            self.assertNotEqual(first_hash, changed_hash)
+
+    def test_exploratory_verified_normal_is_explicit_not_folder_inferred(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "fault"; root.mkdir()
+            Image.new("RGB", (8, 10), "white").save(root / "image.png")
+            unlabeled, _ = scan_exploratory_folder(
+                root, camera_angle="G01", label_mode="unlabeled"
+            )
+            normal, _ = scan_exploratory_folder(
+                root, camera_angle="G01", label_mode="verified_normal"
+            )
+            self.assertEqual(unlabeled[0]["label"], "unlabeled")
+            self.assertEqual(normal[0]["label"], "normal")
 
 
 class SharedPreprocessingRuntimeTests(unittest.TestCase):
@@ -226,6 +284,7 @@ class ComparisonPersistenceTests(unittest.TestCase):
                 engine.prepare(
                     {
                         "model_ids": ["model"],
+                        "dataset_mode": "official_manifest",
                         "split": "test",
                         "manifest": "unused.csv",
                         "source_root": "unused",
@@ -291,7 +350,7 @@ class ComparisonPersistenceTests(unittest.TestCase):
 
             engine = BenchmarkEngine(settings_for(root), Registry(), ComparisonStore(settings_for(root)))
             with self.assertRaisesRegex(ValueError, "exactly one camera angle"):
-                engine.prepare({"model_ids": ["m"], "split": "val", "manifest": str(manifest), "source_root": str(source), "image_count": 2, "seed": 42})
+                engine.prepare({"model_ids": ["m"], "dataset_mode": "official_manifest", "split": "val", "manifest": str(manifest), "source_root": str(source), "image_count": 2, "seed": 42})
 
     def test_prepare_snapshots_contract_and_locked_test_is_full_and_one_shot(self):
         with TemporaryDirectory() as directory:
@@ -307,7 +366,7 @@ class ComparisonPersistenceTests(unittest.TestCase):
                 def get(self, _model_id): return dict(model)
 
             store = ComparisonStore(settings); engine = BenchmarkEngine(settings, Registry(), store)
-            request = {"model_ids": ["m"], "split": "test", "manifest": str(manifest), "source_root": str(source), "image_count": 1, "seed": 42, "locked_test_confirmation": "RUN LOCKED TEST"}
+            request = {"model_ids": ["m"], "dataset_mode": "official_manifest", "split": "test", "manifest": str(manifest), "source_root": str(source), "image_count": 1, "seed": 42, "locked_test_confirmation": "RUN LOCKED TEST"}
             comparison_id = engine.prepare(request)
             saved = store.read_json(comparison_id, "comparison.json")
             self.assertEqual(saved["model_contracts"][0]["checkpoint_sha256"], "checkpoint")
@@ -315,6 +374,28 @@ class ComparisonPersistenceTests(unittest.TestCase):
             self.assertTrue((settings.workspace / "locked_test_record.json").is_file())
             with self.assertRaisesRegex(ValueError, "already evaluated"):
                 engine.prepare(request)
+
+    def test_exploratory_evaluation_allows_different_training_manifests(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory); source = root / "images"; source.mkdir()
+            Image.new("RGB", (8, 10), "white").save(source / "one.png")
+            models = {
+                "a": {"id": "a", "family": "patchcore", "status": "ready_uncalibrated", "issues": [], "manifest_sha256": "training-a", "angle": "G01"},
+                "b": {"id": "b", "family": "patchcore", "status": "ready_uncalibrated", "issues": [], "manifest_sha256": "training-b", "angle": "G01"},
+            }
+
+            class Registry:
+                def get(self, model_id): return dict(models[model_id])
+
+            store = ComparisonStore(settings_for(root))
+            comparison_id = BenchmarkEngine(settings_for(root), Registry(), store).prepare(
+                {"model_ids": ["a", "b"], "source_root": str(source), "image_count": None}
+            )
+            config = store.read_json(comparison_id, "comparison.json")
+            self.assertEqual(config["dataset_mode"], "exploratory_folder")
+            self.assertEqual(config["image_count"], 1)
+            self.assertIn("different manifests", config["warnings"][0])
+            self.assertTrue((store.path(comparison_id) / "evaluation_snapshot.json").is_file())
 
     def test_paired_summaries_exclude_sample_failed_by_any_model(self):
         def row(model, sample, status="completed"):
