@@ -17,16 +17,20 @@ This stage can compare normal-data robustness and false-positive behavior. It
 cannot establish which model detects defects best because every currently
 verified G01 image is normal.
 
-Current status as of 2026-07-30:
+Current status as of 2026-07-31:
 
 - All four preprocessing datasets are complete and identity-validated.
 - The frozen stage-one configuration is implemented and reproducible.
 - Standard all-GPU PatchCore completed feature extraction for the first
   variant, then exceeded the college GPU memory during memory-bank
   construction.
-- A CPU temporary-storage strategy has passed unit and synthetic coreset tests.
-- Full G01 training with that strategy is the next run; no G01 checkpoint or
-  anomaly-score result has yet been produced.
+- CPU temporary embedding storage then completed the first full G01 training
+  run for `raw_letterbox_v1` with all 1,997 training images and a 10% coreset.
+- Canonical `G01.ckpt` and `G01.metadata.json` artifacts were produced. The
+  checkpoint is approximately 1.3 GiB, but load integrity and artifact hashes
+  have not yet been verified.
+- No raw validation scores or anomaly-quality metrics have been reported, and
+  the other three preprocessing variants remain untrained.
 
 This log complements [model-development.md](model-development.md) and
 [preprocessing.md](preprocessing.md). Add a new result row after every material
@@ -246,10 +250,16 @@ saved. `Pending` means unmeasured, not zero.
 | RUN-1, 2026-07-29 | `raw_letterbox_v1`; frozen stage-one model; standard device embedding storage; train/eval batch 8/8 in that attempt | **Failed after feature extraction.** All 250 train batches completed in about 11 s; OOM occurred while stacking the complete embedding pool before coreset selection | None | None | None | 20.07 GiB GPU; attempted additional 11.70 GiB allocation with only 7.15 GiB free |
 | DEV-1, 2026-07-30 | CPU-offload implementation; synthetic 32 x 384 embedding pool | **Passed locally.** Standard `KCenterGreedy` returned a three-row coreset | Not a G01 model | Not applicable | Implementation smoke only | Not representative of G01 |
 | QA-2, 2026-07-30 | Full G01 dry run with `--embedding-storage cpu` and evaluation batch wiring | **Passed.** Canonical hash and 1,997/994/1,000 identities verified; full repository suite passed 26 tests | Not applicable | Not applicable | Command/data contract only | No full embedding pool loaded |
-| RUN-2, pending | `raw_letterbox_v1`; exact frozen stage-one configuration with CPU embedding storage and evaluation batch 1 | **Pending full college-server run** | Pending | Pending | Pending | Peak GPU/RAM, fit time, artifact size pending |
-| RUN-3, pending | `fixed_crop_v1`; same configuration | **Blocked on successful RUN-2 operational proof** | Pending | Pending | Pending | Pending |
-| RUN-4, pending | `rembg_u2net_gray_v1`; same configuration | **Blocked on successful RUN-2 operational proof** | Pending | Pending | Pending | Pending |
-| RUN-5, pending | `rembg_u2net_black_v1`; same configuration | **Blocked on successful RUN-2 operational proof** | Pending | Pending | Pending | Pending |
+| RUN-2, 2026-07-30 | `raw_letterbox_v1`; `CpuOffloadPatchcore`; all 1,997 train images; coreset 0.10; evaluation batch 1 | **Training and artifact production succeeded.** Metadata created at `2026-07-30T19:17:41.200539+00:00`; counts are 1,997/994/1,000 and `test_used_during_training=false` | `G01.ckpt` and `G01.metadata.json` both reported timestamp 2026-07-30 19:17. Checkpoint 1293.3936643600464 MiB (about 1.3 GiB). Hash/load integrity pending | Pending | Pending; no validation or defect claim | Fit 1329.343450333923 s (about 22 min 9 s). Peak GPU/RAM values not yet recorded in this log |
+| RUN-3, pending | `fixed_crop_v1`; same configuration | **Ready but not yet verified as run** | Pending | Pending | Pending | Pending |
+| RUN-4, pending | `rembg_u2net_gray_v1`; same configuration | **Ready but not yet verified as run** | Pending | Pending | Pending | Pending |
+| RUN-5, pending | `rembg_u2net_black_v1`; same configuration | **Ready but not yet verified as run** | Pending | Pending | Pending | Pending |
+
+During RUN-2, the notebook display remained at 17% after its connection became
+stale/disconnected. This was not the final server-process state: training
+continued independently and produced the timestamped checkpoint and metadata.
+For long remote runs, verify the server process and canonical artifacts rather
+than treating a frozen notebook progress display as proof of failure.
 
 Earlier Linux path-capitalization, GUI OpenCV, and Pandas compatibility errors
 occurred before useful training. They are preserved in the troubleshooting
@@ -318,6 +328,50 @@ positives under one calibration rule, segmentation QA, and cost; obtain real
 defects before declaring a winner; then freeze preprocessing and vary one model
 setting at a time.
 
+### Recommended first training-size/coreset comparison
+
+**Recommendation, not measured evidence:** prefer using all 1,997 training
+images with a 1% coreset as the first resource-conscious arm. This exposes the
+feature extractor and coreset selector to every available normal training image
+while producing a smaller final memory bank than a 1,000-image/10% arm. The
+expected benefit is broader observed normal-can diversity with less
+nearest-neighbor work at inference, but validation must test that hypothesis.
+
+At the current 256 px feature geometry, PatchCore produces approximately 1,024
+candidate patch embeddings per image:
+
+| Candidate configuration | Candidate patch pool | Retained coreset | Interpretation |
+|---|---:|---:|---|
+| All 1,997 train images, 1% coreset | Approximately 2,044,928 patches | Approximately 20,449 patches | Observes every training image, then compresses aggressively |
+| Deterministic 1,000-image subset, 10% coreset | Approximately 1,024,000 patches | Approximately 102,400 patches | Observes fewer training images but retains many more patches from them |
+
+Thus, the full-data/1% arm is expected to retain about one-fifth as many final
+patches as the 1,000-image/10% arm. Exact counts should be read from the
+resulting artifact because implementation rounding may differ.
+
+The two controls answer different questions:
+
+- **Training-image count** controls how many captured cans and normal
+  variations the model can observe before compression. More images provide an
+  opportunity for more diversity; correlated production frames mean they are
+  not assumed to be 1,997 statistically independent conditions.
+- **Coreset ratio** controls how aggressively the observed patch embeddings are
+  compressed into the final memory bank. Lower ratios reduce bank size and are
+  expected to reduce inference memory/distance work, but may discard useful
+  normal coverage.
+
+The full-data/1% and 1,000-image/10% candidates change two scientific variables
+at once, so their direct comparison is useful for choosing a practical
+configuration but cannot identify which variable caused a difference. After
+that comparison, run the planned training-size and coreset-ratio arms while
+holding the other variable fixed.
+
+Do not assume the 1,997-image/1% model is superior, and do not claim defect
+performance from normal-only validation. Compare its raw normal-score
+stability, false-positive behavior, artifact size, and latency against the
+deterministic 1,000-image configuration; evaluate defect recall only after
+reviewed defects exist.
+
 ### PatchCore sensitivity studies
 
 | Study | Planned values | Hold constant | Question |
@@ -328,11 +382,10 @@ setting at a time.
 | Coreset seed stability | At least three seeds | All other variables | Is the selected memory bank/result stable to coreset sampling? |
 | Neighbors | Values justified after baseline results | All other variables | Does scoring neighborhood improve defect/normal separation? |
 
-If the CPU-offload full run fails, the immediate fallback is a deterministic,
-versioned approximately 1,000-image subset of the current train identities.
-The same selected IDs must be used for all preprocessing arms, while validation
-and test remain unchanged. This is a scientific training-size experiment, not
-an invisible operational workaround.
+The 1,000-image arm must use a deterministic, versioned subset of current train
+identities. The same selected IDs must be used for all preprocessing arms,
+while validation and test remain unchanged. It is a scientific training-size
+experiment, not an invisible operational workaround.
 
 Later challengers are PaDiM, EfficientAD-S, and, if justified, Reverse
 Distillation. Use raw input as a control plus the best justified preprocessing
@@ -407,7 +460,7 @@ regeneration.
 | GUI OpenCV required missing `libxcb.so.1` | Anomalib import before training | Replaced GUI wheel with `opencv-python-headless==4.13.0.92`; notebook verifies `GUI: NONE` |
 | Pandas 3 incompatibility with Anomalib 2.2 Folder dataset | Datamodule setup | Pinned Pandas 2.3.3 / `<3` |
 | Windows/Linux CSV line endings produced different byte hashes | Manifest reporting | Canonical line-ending-normalized hash now records `0fab56...` on both platforms; identities/splits never changed |
-| All-GPU embedding concatenation OOM | After all 250 feature-extraction batches | Added operational CPU temporary storage; full G01 verification pending |
+| All-GPU embedding concatenation OOM | After all 250 feature-extraction batches | Added operational CPU temporary storage; RUN-2 subsequently completed full G01 training/artifact production |
 
 Relevant repository commits before the current uncommitted experiment work:
 
@@ -416,13 +469,12 @@ Relevant repository commits before the current uncommitted experiment work:
 
 ## Next evidence required
 
-1. Complete RUN-2 on the college server.
-2. Verify and hash its checkpoint/metadata; record fit time, peak RAM/VRAM,
-   artifact size, and load test.
-3. Train the other three stage-one arms with no scientific-variable changes.
-4. Export model-independent raw validation scores and anomaly maps.
-5. Define the acceptable production false-positive rate with the project
+1. Hash and load-test the RUN-2 checkpoint and verify its metadata contents;
+   record peak RAM/VRAM if recoverable.
+2. Train the other three stage-one arms with no scientific-variable changes.
+3. Export model-independent raw validation scores and anomaly maps.
+4. Define the acceptable production false-positive rate with the project
    stakeholders.
-6. Acquire/version reviewed real defect images and masks.
-7. Select preprocessing/model/threshold on validation, then evaluate locked
+5. Acquire/version reviewed real defect images and masks.
+6. Select preprocessing/model/threshold on validation, then evaluate locked
    test once.
