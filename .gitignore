@@ -37,6 +37,10 @@ frontend/npm-debug.log
 frontend/yarn-error.log
 frontend/dist/
 frontend/build/
+model_lab/frontend/node_modules/
+model_lab/frontend/dist/
+model_lab/frontend/.env*
+.model_lab/
 frontend/.env
 frontend/.env.local
 frontend/.env.development.local

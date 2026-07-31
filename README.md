@@ -1,123 +1,134 @@
-# JerryscanAI 🧠
+# JerryscanAI
 
-A professional AI-powered surface defect detection system built with **FastAPI** and **React**, utilizing **Anomalib (Padim)** for high-precision anomaly detection on production lines.
+JerryscanAI is a production-line surface-defect inspection system for jerrycans captured by fixed cameras. The repository contains the manufacturing application, reproducible dataset and preprocessing workflows, PatchCore training, and a separate Model Lab for controlled model comparison.
 
-## 🚀 Deployment Instructions
+PatchCore is the only model family supported by the current training and Model Lab workflow. The design leaves room for future model families, but they are not implemented or advertised as supported.
 
-### 1. Backend Setup
-1.  **Install `uv`** (if not already installed):
-    ```bash
-    # Windows
-    irm https://astral.sh/uv/install.ps1 | iex
-    
-    # macOS/Linux
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    ```
-2.  **Sync dependencies**:
-    ```bash
-    uv sync
-    ```
-3.  **Model Deployment (Hierarchical)**
-    The system supports multiple model sets. Create a subfolder for each set inside `models/`:
-    ```
-    Project/JerryscanAI/
-    ├── models/
-    │   ├── Standard/
-    │   │   ├── front.ckpt
-    │   │   ├── back.ckpt
-    │   │   └── ...
-    │   └── Optimized_V2/
-    │       └── ...
-    ```
-4.  **Start Server Locally**:
-    ```bash
-    cd backend
-    python .\main.py
-    ```
+## Repository areas
 
-### 1B. Production Deployment (CI/CD via Docker)
-The backend is configured for automated deployment via GitHub Actions and Docker by building a private image in the GitHub Container Registry (GHCR).
+- `backend/`: FastAPI manufacturing-line API, inspection history, alerts, and current production inference.
+- `frontend/`: React/Vite manufacturing-line interface.
+- `training/`: frozen dataset manifests, derivative generation, preprocessing runtime, and PatchCore training.
+- `data_manifests/`: versioned raw-sample identities and split assignments. Images are stored outside Git.
+- `model_lab/`: independent FastAPI and React/Vite PatchCore comparison application.
+- `models/`: versioned model-folder documentation and local model/preprocessing artifacts. See [models/README.md](models/README.md); large weights are ignored by Git.
+- `tests/`: dataset, preprocessing, training, and Model Lab safeguards.
 
-1. **Clone to Remote Server**: Ensure your remote Linux machine has the repository cloned to `~/jerryscanai` and that Docker is installed.
-2. **GitHub Secrets**: First, generate a **Personal Access Token (classic)** with `read:packages` permissions on GitHub. Then, in your GitHub repository settings, add the following secrets:
-   - `HOST_IP`: IP or domain of your Linux machine.
-   - `HOST_USERNAME`: Your login username (e.g., `ubuntu`).
-   - `HOST_PASSWORD`: Your login password.
-   - `GHCR_PAT`: The Personal Access Token you generated (used to pull the image onto your server).
-3. **Automated Deploy**: Pushing to the `main` branch will automatically trigger the `.github/workflows/deploy.yml` action. It will build the image, push it to GHCR, connect to your server, authenticate Docker, pull the latest image, and restart the container.
+Read [AGENTS.md](AGENTS.md) before contributing. Model experiments must follow [docs/model-development.md](docs/model-development.md), preprocessing must follow [docs/preprocessing.md](docs/preprocessing.md), and training commands are documented in [training/README.md](training/README.md).
 
-Alternatively, manually deploy on your server:
+## Environment
+
+Install [`uv`](https://docs.astral.sh/uv/) and synchronize the Python environment from the repository root:
+
+```powershell
+uv sync
+```
+
+Frontend dependencies are installed separately in their respective application directories with `npm install`.
+
+## Manufacturing application
+
+Start the production API from the repository root:
+
+```powershell
+uv run uvicorn backend.main:app --reload
+```
+
+Start the production frontend in another terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Model checkpoints are currently discovered from subdirectories under `models/`, with one checkpoint per camera angle:
+
+```text
+models/
+└── <model-set>/
+    ├── G01.ckpt
+    ├── G02.ckpt
+    ├── G03.ckpt
+    └── G04.ckpt
+```
+
+> [!WARNING]
+> The production inference path has not yet been migrated to the new immutable preprocessing and calibration contracts used by Model Lab. A model registered successfully in Model Lab is not automatically production-ready. Complete an end-to-end GPU validation and production inference migration before deployment, especially for fixed-crop or segmentation-based preprocessing.
+
+For container deployment, use the repository's Docker configuration:
+
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-### 2. Frontend Setup
-1.  **Install Dependencies**:
-    ```bash
-    cd frontend
-    npm install
-    ```
-2.  **Environment Setup**:
-    Create a `.env` file in `frontend/` (copy from `.env_templates`)
+## Model Lab
 
-3.  **Run Development Server**:
-    ```bash
-    npm run dev
-    ```
+Model Lab is a separate research application. It does not start with or expose the manufacturing application. The current implementation supports comparisons of one to four PatchCore models.
 
----
+Start the Model Lab API:
 
-The **Model Lab** is a dedicated research environment for evaluating new models (Padim/Patchcore) and comparing performance metrics side-by-side.
-
-Model research must use the frozen, manifest-driven split and evaluation rules in [docs/model-development.md](docs/model-development.md). Agent and contributor guardrails are defined in [AGENTS.md](AGENTS.md).
-Preprocessing models and derivative datasets follow [docs/preprocessing.md](docs/preprocessing.md); PatchCore training begins only after a variant passes that audit.
-The reproducible dataset, preprocessing, and model-training entry points live
-under [training/](training/README.md).
-
-### Running the Lab
-```bash
-uv run --extra lab streamlit run model_lab/app.py
+```powershell
+uv run python -m model_lab
 ```
 
-### Dataset Setup (`test_dataset/`)
-> [!IMPORTANT]
-> To use the Model Lab, download the `test_dataset` from the **JerryscanAI Google Drive** and place it in the project root.
+Start its independent frontend in a second terminal:
 
-Organize your test images by camera angle and category:
-```
-test_dataset/
-├── front/
-│   ├── normal/       # Good samples
-│   ├── fault/        # Defective samples
-│   └── ground_truth/ # (Optional) Semantic masks
-├── back/
-│   └── ...
-├── side_l/
-│   └── ...
-└── side_r/
-    └── ...
+```powershell
+cd model_lab/frontend
+npm install
+npm run dev
 ```
 
----
+Open `http://127.0.0.1:5174`. The API listens on `http://127.0.0.1:8010`. Set `JERRYSCAN_LAB_WORKSPACE` to place imported checkpoints, caches, and comparison results outside the default ignored `.model_lab/` directory.
 
-## 🛠 Features
+### Comparison workflow
 
--   **Multi-Angle Batch Inspection**: Simultaneous inspection of Front, Back, Side L, and Side R views.
--   **Professional Alerting System**:
-    -   **Custom Rules**: "Failure Streaks" or "Pass Rate Drops" triggers.
-    -   **Multi-Channel**: Multiple Email recipients and Webhooks per rule.
--   **History & Analytics**: Real-time stats, pass rates, and interactive historical logs with heatmaps.
--   **Multi-Model Management**: Hot-swappable model sets during runtime.
--   **Simulation Suite**: Batch process `test_images/` to verify alert rules and system logic.
+1. Register an existing PatchCore checkpoint, discover a model directory, or upload a checkpoint and its metadata.
+2. Complete any missing angle, manifest, preprocessing, derivative-root, or calibration fields shown by the model contract editor.
+3. Select one to four models, the original raw-image root, the frozen manifest, the split, an image count, and a reproducible seed.
+4. Run the comparison. The same raw sample identities are selected once for every model.
+5. Each model receives its declared preprocessing. A verified derivative or cache may be reused; otherwise Model Lab preprocesses the original image and records the provenance.
+6. Review paired raw scores, false alarms when calibrated, preprocessing quality flags, latency, actual model inputs, masks, and heatmaps.
 
-## 📂 Project Structure
+Use **Force live preprocessing** when measuring end-to-end behavior. Normal comparisons may reuse only derivatives whose source, manifest, configuration, preprocessing-model, and output hashes match the registered contract.
 
--   `backend/`: FastAPI core and alerting engine.
--   `backend/inference/`: AI logic, history persistence, and model management.
--   `frontend/`: React application (Live Dashboard & History).
--   `model_lab/`: Streamlit-based benchmarking and evaluation suite.
--   `training/`: Dataset manifests, preprocessing generators, and model-training workflows.
--   `models/`: Storage for versioned `.ckpt` weight files.
--   `test_dataset/`: Angle-aware directory for model evaluation.
--   `test_images/`: Samples for end-to-end system simulation.
+The Single Image screen always starts from an original camera image and executes the selected model's live preprocessing pipeline.
+
+### Evaluation safeguards
+
+- Validation is the default comparison split.
+- A test comparison must use the complete frozen test split and creates a one-shot lock tied to immutable model contracts.
+- Runs snapshot checkpoint, preprocessing, calibration, and manifest identities and verify them again when resumed.
+- Metrics use raw image anomaly scores, never clipped display percentages.
+- Models are summarized only on sample identities completed successfully by every selected model.
+- With an all-normal dataset, AUROC, F1, precision, and recall are unavailable rather than reported as zero.
+- Models without an image threshold remain uncalibrated: raw-score and latency analysis is available, but decisions and false-positive rate are not.
+- Per-image heatmap scaling is display-only and is never used as an evaluation score.
+
+The old `model_lab/app.py` Streamlit interface remains temporarily as a legacy exploratory reference and must not be used for benchmark claims. Full Model Lab details are in [model_lab/README.md](model_lab/README.md).
+
+## Training and preprocessing
+
+Raw images are immutable and remain outside Git. Frozen manifests select raw sample identities before preprocessing, and every derivative inherits the same split.
+
+The shared preprocessing runtime is used by batch derivative generation and Model Lab live preprocessing. Current configurations include raw letterboxing, fixed crop, U2Net/rembg background replacement, and prepared SAM support. PatchCore training consumes audited derivative datasets and records checkpoint metadata next to each model.
+
+See [training/README.md](training/README.md) for exact commands and [docs/training-experiment-log.md](docs/training-experiment-log.md) for the recorded experiment history.
+
+## Verification
+
+Run the Python test suite with:
+
+```powershell
+uv run python -m unittest discover -s tests
+```
+
+Verify the Model Lab frontend with:
+
+```powershell
+cd model_lab/frontend
+npm run lint
+npm run build
+```
