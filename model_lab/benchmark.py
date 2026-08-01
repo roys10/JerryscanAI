@@ -338,7 +338,10 @@ class BenchmarkEngine:
             raw_map.parent.mkdir(parents=True, exist_ok=True)
             np.save(raw_map, output.raw_anomaly_map, allow_pickle=False)
             heatmap = asset_root / "heatmaps" / f"{sample['sample_id']}.png"
-            save_anomaly_visualization(output.raw_anomaly_map, heatmap)
+            overlay = asset_root / "overlays" / f"{sample['sample_id']}.png"
+            visualization = save_anomaly_visualization(
+                output.raw_anomaly_map, input_copy, heatmap, overlay
+            )
             preprocessing_ms = float(provenance.get("processing_ms", 0))
             return {
                 **base,
@@ -352,6 +355,8 @@ class BenchmarkEngine:
                 "mask_asset": str(mask_copy.relative_to(self.store.path(comparison_id))) if mask_copy else None,
                 "raw_anomaly_map_asset": str(raw_map.relative_to(self.store.path(comparison_id))),
                 "heatmap_asset": str(heatmap.relative_to(self.store.path(comparison_id))),
+                "heatmap_overlay_asset": str(overlay.relative_to(self.store.path(comparison_id))),
+                "visualization": visualization,
                 "raw_image_score": output.raw_image_score,
                 "image_threshold": output.image_threshold,
                 "prediction": output.prediction,

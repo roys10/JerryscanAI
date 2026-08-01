@@ -280,7 +280,10 @@ async def single_image(model_id: str, image: UploadFile = File(...)) -> dict[str
         raw_map = folder / "raw_anomaly_map.npy"
         np.save(raw_map, output.raw_anomaly_map, allow_pickle=False)
         heatmap = folder / "heatmap.png"
-        save_anomaly_visualization(output.raw_anomaly_map, heatmap)
+        overlay = folder / "heatmap_overlay.png"
+        visualization = save_anomaly_visualization(
+            output.raw_anomaly_map, input_path, heatmap, overlay
+        )
         return {
             "id": folder.name,
             "raw_image_score": output.raw_image_score,
@@ -291,11 +294,13 @@ async def single_image(model_id: str, image: UploadFile = File(...)) -> dict[str
             "total_ms": provenance["processing_ms"] + output.inference_ms,
             "quality_flags": provenance.get("quality_flags", []),
             "model_input_transform": output.transform_contract,
+            "visualization": visualization,
             "assets": {
                 "original": "original.png",
                 "input": "model_input.png",
                 "mask": "mask.png" if mask_path else None,
                 "heatmap": "heatmap.png",
+                "overlay": "heatmap_overlay.png",
             },
         }
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:

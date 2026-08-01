@@ -68,6 +68,18 @@ method, source manifest/split, sample-identity hash, target FPR, and timestamp.
 With all-normal data, AUROC, F1, precision, and recall are shown as unavailable
 instead of zero.
 
+Current imported PatchCore models are uncalibrated unless their registry record
+contains a documented image-score calibration. In that state Model Lab reports
+the raw image score but shows **Decision unavailable**. Do not import the legacy
+production `50%` cutoff: the previously shown values such as `PASS 38.5%` came
+from flawed pixel/per-image percentage normalization and are neither raw
+PatchCore scores nor valid Model Lab thresholds.
+
+PatchCore evaluation calls the checkpoint's inner torch model after applying
+the checkpoint training transform exactly once. Raw anomaly maps are persisted
+unchanged as `.npy`. Heatmaps and overlays use per-map scaling only for display,
+are labeled display-only, and never feed scores, thresholds, or metrics.
+
 ## Exploratory folders and official benchmarks
 
 The default screen is intentionally simple: choose original camera images and

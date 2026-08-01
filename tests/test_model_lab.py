@@ -1,9 +1,11 @@
 import csv
 import json
+from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+import numpy as np
 from PIL import Image
 
 from model_lab.datasets import (
@@ -14,7 +16,11 @@ from model_lab.datasets import (
 )
 from model_lab.benchmark import BenchmarkEngine, paired_model_summaries
 from model_lab.metrics import calculate_metrics
-from model_lab.patchcore_adapter import PATCHCORE_TRANSFORM_CONTRACT
+from model_lab.patchcore_adapter import (
+    PATCHCORE_TRANSFORM_CONTRACT,
+    PatchCoreAdapter,
+    save_anomaly_visualization,
+)
 from model_lab.preprocessing import PreprocessingResolver
 from model_lab.registry import ModelRegistry
 from model_lab.settings import LabSettings
@@ -171,6 +177,72 @@ class ModelLabDatasetTests(unittest.TestCase):
 class SharedPreprocessingRuntimeTests(unittest.TestCase):
     def test_patchcore_runtime_matches_training_bilinear_resize(self):
         self.assertEqual(PATCHCORE_TRANSFORM_CONTRACT["interpolation"], "bilinear")
+
+    def test_patchcore_adapter_uses_inner_model_and_preserves_raw_outputs(self):
+        import torch
+        from torchvision.transforms import v2
+
+        calls = {"transform": 0, "outer": 0, "pre": 0, "post": 0, "inner": 0}
+
+        def transform(tensor):
+            calls["transform"] += 1
+            return tensor.to(torch.float32) / 255
+
+        class Inner:
+            def __call__(self, _tensor):
+                calls["inner"] += 1
+                return SimpleNamespace(
+                    pred_score=torch.tensor([0.375], dtype=torch.float32),
+                    anomaly_map=torch.tensor([[[[0.1, 0.2], [0.4, 0.9]]]]),
+                )
+
+        class Outer:
+            model = Inner()
+
+            def __call__(self, tensor):
+                calls["outer"] += 1
+                calls["pre"] += 1
+                result = self.model(tensor)
+                calls["post"] += 1
+                return result
+
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "input.png"
+            Image.new("RGB", (8, 8), "white").save(image_path)
+            adapter = PatchCoreAdapter.__new__(PatchCoreAdapter)
+            adapter.torch = torch
+            adapter.v2 = v2
+            adapter.device = torch.device("cpu")
+            adapter.transform = transform
+            adapter.model = Outer()
+            adapter.contract = {"image_threshold": None}
+            output = adapter.predict(image_path)
+
+        self.assertEqual(
+            calls,
+            {"transform": 1, "outer": 0, "pre": 0, "post": 0, "inner": 1},
+        )
+        self.assertAlmostEqual(output.raw_image_score, 0.375)
+        self.assertTrue(np.allclose(output.raw_anomaly_map, [[0.1, 0.2], [0.4, 0.9]]))
+        self.assertGreater(float(output.raw_anomaly_map.max()), float(output.raw_anomaly_map.min()))
+
+    def test_display_overlay_warns_for_nonfinite_or_constant_map_without_mutation(self):
+        import numpy as np
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            model_input = root / "input.png"
+            Image.new("RGB", (20, 10), "white").save(model_input)
+            raw_map = np.asarray([[np.nan, 2.0], [2.0, 2.0]], dtype=np.float32)
+            original = raw_map.copy()
+            metadata = save_anomaly_visualization(
+                raw_map, model_input, root / "heatmap.png", root / "overlay.png"
+            )
+            self.assertTrue(np.array_equal(raw_map, original, equal_nan=True))
+            self.assertIn("anomaly_map_nonfinite_values_replaced_for_display", metadata["warnings"])
+            self.assertIn("anomaly_map_is_constant", metadata["warnings"])
+            with Image.open(root / "overlay.png") as overlay:
+                self.assertEqual(overlay.size, (20, 10))
 
     def test_black_recomposition_resolves_to_full_live_parent_pipeline(self):
         with TemporaryDirectory() as directory:

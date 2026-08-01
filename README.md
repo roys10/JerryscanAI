@@ -114,6 +114,7 @@ The Single Image screen always starts from an original camera image and executes
 - With an all-normal dataset, AUROC, F1, precision, and recall are unavailable rather than reported as zero.
 - Models without an image threshold remain uncalibrated: raw-score and latency analysis is available, but decisions and false-positive rate are not.
 - Per-image heatmap scaling is display-only and is never used as an evaluation score.
+- Uncalibrated models show Decision unavailable. The legacy production `50%` threshold and percentages such as `PASS 38.5%` came from flawed normalization and must not be reused as Model Lab calibration.
 
 The old `model_lab/app.py` Streamlit interface remains temporarily as a legacy exploratory reference and must not be used for benchmark claims. Full Model Lab details are in [model_lab/README.md](model_lab/README.md).
 
