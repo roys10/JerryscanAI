@@ -40,8 +40,9 @@ The completed G01 variants have the following audited properties:
 | `raw_letterbox_v1` | 3,991 | n/a | 0 | Recorded in its derivative manifest |
 | `fixed_crop_v1` | 3,991 | n/a | 0 | 133.7 ms/image |
 | `rembg_u2net_gray_v1` | 3,991 | 3,991 | 0 | 593.1 ms/image |
+| `rembg_u2net_black_v1` | 3,991 | 3,991 | 0 | Recorded in its derivative manifest; U²-Net was not rerun |
 
-All three variants contain exactly 1,997 train, 994 validation, and 1,000
+All four complete variants contain exactly 1,997 train, 994 validation, and 1,000
 locked-test identities from `split_v2.csv`; all pass the PatchCore training dry
 run. U²-Net mask area ranges from 0.4837 to 0.4988 with one retained connected
 object per image.

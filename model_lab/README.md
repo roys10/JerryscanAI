@@ -31,7 +31,7 @@ repository.
 ## Workflow
 
 1. Register a checkpoint already on disk, discover a models folder, or upload a
-   checkpoint bundle.
+   checkpoint with its metadata and preprocessing configuration.
 2. Complete any explicitly listed contract gaps. A checkpoint is never assigned
    a model family, camera angle, preprocessor, manifest, or threshold by guessing.
 3. Select one to four ready PatchCore models, one folder containing original
@@ -95,14 +95,24 @@ model's manifest hash identifies its training data, not the evaluation data;
 models trained on different manifests may be compared on a new folder or
 official manifest, with that difference retained as a warning.
 
-## Production integration boundary
+## Manufacturing-runtime boundary
 
-The shared preprocessing runtime is ready for production use, but the current
-manufacturing backend has not yet been migrated to resolve and enforce these
-registered model contracts. A Model Lab registration is therefore **not a
-deployable production bundle yet**. Production integration must make
-`backend/inference` load the same immutable preprocessing, calibration, and
-PatchCore contracts before any selected lab model is deployed on the line.
+Model Lab and the manufacturing application share preprocessing code, but they
+remain separate applications. A Model Lab registration does not select or
+modify the model used by the manufacturing backend.
+
+The manufacturing backend loads exactly one local model folder selected with
+`JERRYSCAN_MODEL_FOLDER`. That folder has its own tracked `model.json`, which
+binds the checkpoint, training metadata, preprocessing configuration, original
+G01 dimensions, and any preprocessing weight by identity and hash. See
+[the local model-folder guide](../models/README.md). Model Lab registrations
+continue to use the lab registry and workspace so experiments cannot silently
+change the line runtime.
+
+The current model folders have no validated defect threshold. They therefore
+run in `SHADOW / UNDECIDED`; Model Lab results must not be treated as
+production PASS/FAIL qualification until labeled real faults are used for
+validation and the locked test is evaluated after all decisions are frozen.
 
 The previous Streamlit files remain temporarily as a legacy exploratory UI and
 must not be used for benchmark claims.

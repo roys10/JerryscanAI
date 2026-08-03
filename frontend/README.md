@@ -1,16 +1,33 @@
-# React + Vite
+# Manufacturing frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This React/Vite application is the operator interface for the JerryscanAI
+manufacturing backend. It is separate from the research Model Lab frontend.
 
-Currently, two official plugins are available:
+The current runtime supports original G01 camera images and exactly one active
+PatchCore model folder. The backend applies that model's preprocessing; do not
+upload a preprocessed derivative. Until a real-fault validation threshold is
+approved, successful inspections appear as `SHADOW / UNDECIDED`. Invalid
+inputs or unavailable artifacts require `REVIEW` rather than producing PASS.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Start locally
 
-## React Compiler
+Start the backend from the repository root first; see the
+[main project README](../README.md#manufacturing-application). Then run:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```powershell
+cd frontend
+npm install
+npm run dev
+```
 
-## Expanding the ESLint configuration
+Open the Vite URL printed in the terminal (normally
+`http://127.0.0.1:5173`). The frontend calls `http://localhost:8000` by
+default. To use another backend address, set `VITE_BACKEND_URL` before starting
+or building the frontend.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Checks
+
+```powershell
+npm run lint
+npm run build
+```

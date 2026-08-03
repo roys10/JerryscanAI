@@ -6,7 +6,7 @@ Keep PatchCore as the first baseline, but make the comparison protocol trustwort
 
 The first controlled benchmark should compare background-handling approaches with the same PatchCore configuration. Model families should only expand after raw scores, thresholds, and metrics are correct in Model Lab.
 
-## Frozen G01 split v1
+## Frozen G01 split v2
 
 | Split | Capture sessions | Images | Purpose |
 |---|---:|---:|---|
@@ -114,26 +114,34 @@ The production decision metric should be defect recall at an agreed maximum fals
 
 Threshold selection belongs to validation. If validation is normal-only, choose a provisional normal-score quantile tied to the allowed false-reject rate and label it provisional. Do not use the maximum normal score as an unexamined production threshold.
 
-## Known issues in the current training and Model Lab path
+## Current training and Model Lab status
 
-Resolve these before treating lab results as benchmarks:
+The original training and comparison-path problems have been addressed for the
+current PatchCore workflow:
 
-- The notebook installs unpinned packages instead of using `uv.lock`.
-- Training passes `normal_split_ratio=0.2`, but this is not the `FROM_TRAIN` validation fraction; `val_split_ratio` is omitted and defaults to 0.5. It also creates that split randomly instead of consuming the frozen manifest.
-- No final test is run and experiment metadata are not saved next to checkpoints.
-- Inference can mix pixel normalization/threshold values with image scores and decisions.
-- Per-image heatmap normalization destroys score comparability across images.
-- Model Lab computes AUROC from clipped percentages rather than raw image scores.
-- Preprocessing is hardcoded rather than loaded from each model artifact.
-- Ground-truth masks are discovered but unused.
-- Model loading is architecture-specific, which blocks fair comparison with new Anomalib models.
+- training consumes the frozen manifest and explicit train/validation folders;
+- the locked test folder is not passed to Anomalib during fitting;
+- experiment metadata are written beside each checkpoint;
+- Model Lab compares raw image scores and treats heatmap normalization as
+  display-only;
+- each registered model supplies its own preprocessing contract; and
+- normal-only data do not produce defect AUROC, F1, precision, or recall.
+
+Important limitations remain. PatchCore is still the only supported model
+family in the current lab path, pixel/region metrics require reviewed defect
+masks, and none of the four current G01 models has a threshold calibrated with
+real labeled faults. Consequently, current normal-only comparisons can measure
+score drift and false-positive behavior but cannot establish the best defect
+detector or qualify production PASS/FAIL decisions.
 
 Anomalib already provides model-aware preprocessing, postprocessing, evaluators, and deployment inference. Prefer those interfaces over reconstructing calibration from checkpoint attributes ([deployment guide](https://anomalib.readthedocs.io/en/stable/markdown/guides/reference/deploy/), [metrics reference](https://anomalib.readthedocs.io/en/latest/markdown/guides/reference/metrics/index.html)).
 
 ## Execution milestones
 
 1. **Complete:** materialize `split_v2` and dry-run `python -m training.models.train_patchcore`; it verifies the manifest and consumes explicit train/validation folders without a random internal split.
-2. Fix Model Lab to save and evaluate raw model outputs with model-aware calibration.
+2. **Complete for PatchCore:** Model Lab saves raw model outputs, keeps display
+   heatmaps separate, applies per-model preprocessing, and exposes calibration
+   only when a threshold contract exists.
 3. **Partially complete:** raw letterbox, fixed crop, and U²-Net variants are
    complete and audited. ISNet failed its smoke-test mask QA. SAM 2.1 is
    checkpoint/config ready but awaits a Linux runtime.
