@@ -1,25 +1,40 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from inference.manager import JerryScanModelManager
-from inference.history import HistoryManager
-from inference.config import ConfigManager
-from inference.alerts import AlertManager
+"""Local G01 manufacturing API backed by one selected model folder."""
+
+from __future__ import annotations
+
 import os
+from pathlib import Path
+from typing import Any, Optional
+
 import uvicorn
-from typing import List, Optional, Dict, Any
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
-app = FastAPI(title="JerryscanAI Backend")
+from backend.inference.alerts import AlertManager
+from backend.inference.config import ConfigManager
+from backend.inference.history import HistoryManager
+from backend.inference.manager import JerryScanModelManager
 
-# CORS
+
+def _origins() -> list[str]:
+    configured = os.getenv(
+        "JERRYSCAN_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+
+app = FastAPI(title="JerryscanAI local G01 backend")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Managers
 model_manager = JerryScanModelManager()
 history_manager = HistoryManager()
 config_manager = ConfigManager()
@@ -27,213 +42,171 @@ alert_manager = AlertManager(config_manager, history_manager)
 
 
 @app.on_event("startup")
-async def load_models():
-    # Base dir is backend/
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(base_dir)
-    models_dir = os.path.join(project_root, "models")
+async def load_selected_model() -> None:
+    try:
+        await run_in_threadpool(model_manager.load_selected)
+    except Exception as exc:
+        # The API still starts so /health and inspection responses can explain
+        # exactly which local artifact is missing.  It never returns PASS.
+        print(f"Model folder is not ready: {type(exc).__name__}: {exc}")
 
-    # Hierarchical loading from 'models/' directory
-    if os.path.exists(models_dir):
-        print(f"Scanning models directory: {models_dir}")
-        model_manager.load_all_models(models_dir)
 
-    if not model_manager.models:
-        print("\n" + "=" * 60)
-        print("CRITICAL WARNING: MANUAL ACTION REQUIRED")
-        print("=" * 60)
-        print(f"No model folders found in {models_dir}.")
-        print("Please CREATE a subfolder in 'models/' and COPY .ckpt files there.")
-        print("Example: models/Standard/front.ckpt")
-        print("=" * 60 + "\n")
+async def _read_bounded(upload: UploadFile) -> bytes:
+    maximum = (
+        model_manager.runtime.manifest.max_image_bytes
+        if model_manager.runtime is not None
+        else 25 * 1024 * 1024
+    )
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(min(1024 * 1024, maximum + 1 - total))
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > maximum:
+            raise HTTPException(status_code=413, detail="Camera image is too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _overall_status(results: dict[str, dict[str, Any]]) -> str:
+    statuses = {result.get("status", "SYSTEM_ERROR") for result in results.values()}
+    for status in ("SYSTEM_ERROR", "REVIEW", "FAIL", "SHADOW"):
+        if status in statuses:
+            return status
+    return "PASS" if statuses == {"PASS"} else "SYSTEM_ERROR"
+
+
+async def _record(results: dict[str, dict[str, Any]]) -> tuple[str, str]:
+    overall = _overall_status(results)
+    model_id = next(
+        (result.get("model_id") for result in results.values() if result.get("model_id")),
+        None,
+    )
+    session_id = await run_in_threadpool(
+        history_manager.save_session, results, overall, model_id
+    )
+    await run_in_threadpool(alert_manager.evaluate_session, overall, session_id)
+    return session_id, overall
+
+
+async def _inspect_g01(upload: UploadFile, model_name: str | None) -> dict[str, Any]:
+    contents = await _read_bounded(upload)
+    return await run_in_threadpool(
+        model_manager.inspect,
+        "G01",
+        contents,
+        requested_model=model_name,
+    )
 
 
 @app.get("/models")
-async def get_models():
-    """Returns list of available model sets (folder names)."""
+async def get_models() -> list[str]:
     return model_manager.get_model_names()
 
 
-@app.post("/inspect/{angle_id}")
+@app.post("/inspect/G01")
 async def inspect_image(
-    angle_id: str, file: UploadFile = File(...), model_name: Optional[str] = None
-):
-    try:
-        if not model_manager.models:
-            raise HTTPException(
-                status_code=503, detail="System not ready. No models loaded."
-            )
-
-        contents = await file.read()
-        try:
-            model = model_manager.get_model(angle_id, model_name=model_name)
-            return model.predict(contents)
-        except KeyError as e:
-            return {
-                "status": "UNAVAILABLE",
-                "message": str(e),
-                "score": 0.0,
-                "score_percentage": 0.0,
-                "heatmap_image": None,
-                "segmentation_image": None,
-                "original_image": None,
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Inspection Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    file: UploadFile = File(...), model_name: Optional[str] = None
+) -> dict[str, Any]:
+    result = await _inspect_g01(file, model_name)
+    session_id, overall = await _record({"G01": result})
+    return {**result, "session_id": session_id, "overall_status": overall}
 
 
 @app.post("/inspect-batch")
 async def inspect_batch(
     model_name: Optional[str] = None,
     G01: Optional[UploadFile] = File(None),
-    G02: Optional[UploadFile] = File(None),
-    G03: Optional[UploadFile] = File(None),
-    G04: Optional[UploadFile] = File(None),
-):
-    """
-    Processes multiple angles and saves a single history session.
-    """
-    files = {"G01": G01, "G02": G02, "G03": G03, "G04": G04}
-    results = {}
-    overall_status = "PASS"
-
-    for angle_id, file in files.items():
-        if file:
-            contents = await file.read()
-            try:
-                model = model_manager.get_model(angle_id, model_name=model_name)
-                res = model.predict(contents)
-                results[angle_id] = res
-                if res.get("status") == "FAIL":
-                    overall_status = "FAIL"
-            except KeyError:
-                results[angle_id] = {"status": "UNAVAILABLE", "score": 0.0}
-
-    if not results:
-        raise HTTPException(status_code=400, detail="No images provided")
-
-    session_id = history_manager.save_session(
-        results, overall_status, model_name=model_name
-    )
-    alert_manager.evaluate_session(overall_status, session_id)
+) -> dict[str, Any]:
+    if G01 is None:
+        raise HTTPException(status_code=400, detail="The required G01 image is missing")
+    result = await _inspect_g01(G01, model_name)
+    results = {"G01": result}
+    session_id, overall = await _record(results)
     return {
         "session_id": session_id,
-        "overall_status": overall_status,
+        "overall_status": overall,
         "angles": results,
+        "mode": result.get("mode", "shadow"),
+        "required_angles": ["G01"],
     }
 
 
 @app.get("/settings")
-async def get_settings():
+async def get_settings() -> dict[str, Any]:
     return config_manager.get_all()
 
 
 @app.post("/settings")
-async def update_settings(settings: Dict[str, Any]):
-    updated = config_manager.update(settings)
-    return {"status": "success", "settings": updated}
+async def update_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "success", "settings": config_manager.update(settings)}
+
+
+@app.post("/reload-model")
+async def reload_model() -> dict[str, Any]:
+    try:
+        await run_in_threadpool(model_manager.load_selected)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=model_manager.health()) from exc
+    return model_manager.health()
 
 
 @app.get("/history")
-async def get_history(status: Optional[str] = None):
+async def get_history(status: Optional[str] = None) -> list[dict[str, Any]]:
     return history_manager.get_history(status=status)
 
 
 @app.get("/stats")
-async def get_stats():
+async def get_stats() -> dict[str, Any]:
     return history_manager.get_stats()
 
 
 @app.post("/simulate-trigger")
-async def simulate_trigger(model_name: Optional[str] = None):
-    # Logic to process ALL subfolders in test_images/
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    test_dir = os.path.join(base_dir, "test_images")
-
-    if not os.path.exists(test_dir):
-        raise HTTPException(
-            status_code=404, detail=f"test_images directory not found at {test_dir}"
-        )
-
-    subdirs = [
-        d for d in os.listdir(test_dir) if os.path.isdir(os.path.join(test_dir, d))
-    ]
-    if not subdirs:
-        raise HTTPException(
-            status_code=404, detail="No test folders found in test_images"
-        )
-
-    all_sessions_results = []
-    global_batch_status = "PASS"
-
-    for chosen_folder in subdirs:
-        folder_path = os.path.join(test_dir, chosen_folder)
-        results = {}
-        overall_status = "PASS"
-
-        for angle_id in ["G01", "G02", "G03", "G04"]:
-            img_path = None
-            for ext in [".jpg", ".png", ".jpeg"]:
-                p = os.path.join(folder_path, f"{angle_id}{ext}")
-                if os.path.exists(p):
-                    img_path = p
-                    break
-
-            if img_path:
-                with open(img_path, "rb") as f:
-                    contents = f.read()
-                    try:
-                        model = model_manager.get_model(angle_id, model_name=model_name)
-                        res = model.predict(contents)
-                        results[angle_id] = res
-                        if res.get("status") == "FAIL":
-                            overall_status = "FAIL"
-                    except KeyError:
-                        results[angle_id] = {"status": "UNAVAILABLE", "score": 0}
-            else:
-                results[angle_id] = {"status": "MISSING", "score": 0}
-
-        session_id = history_manager.save_session(
-            results, overall_status, model_name=model_name
-        )
-        alert_manager.evaluate_session(overall_status, session_id)
-
-        if overall_status == "FAIL":
-            global_batch_status = "FAIL"
-
-        all_sessions_results.append(
-            {
-                "folder": chosen_folder,
-                "session_id": session_id,
-                "overall_status": overall_status,
-                "angles": results,
-                "model_name": model_name,
-            }
-        )
-
-    # the frontend expects an object with overall_status and angles (results dict)
-    # We will map the very last result as the "live console" result, but all will be in history
-    final_session = all_sessions_results[-1]
+async def simulate_trigger(model_name: Optional[str] = None) -> dict[str, Any]:
+    test_dir = Path(__file__).resolve().parents[1] / "test_images"
+    image_path = next(
+        (
+            path
+            for suffix in (".bmp", ".png", ".jpg", ".jpeg")
+            if (path := test_dir / f"G01{suffix}").is_file()
+        ),
+        None,
+    )
+    if image_path is None:
+        raise HTTPException(status_code=404, detail="Required test_images/G01 image not found")
+    result = await run_in_threadpool(
+        model_manager.inspect,
+        "G01",
+        image_path.read_bytes(),
+        requested_model=model_name,
+    )
+    session_id, overall = await _record({"G01": result})
     return {
-        "overall_status": global_batch_status,
-        "angles": final_session["angles"],
-        "batch_processed": len(all_sessions_results),
+        "session_id": session_id,
+        "overall_status": overall,
+        "angles": {"G01": result},
     }
 
 
 @app.get("/health")
-def health_check():
-    return {
-        "status": "ok",
-        "model_sets": model_manager.get_model_names(),
-        "details": {
-            name: list(angles.keys()) for name, angles in model_manager.models.items()
-        },
-    }
+def health_check() -> dict[str, Any]:
+    return {**model_manager.health(), "supported_angles": ["G01"]}
+
+
+@app.get("/ready")
+def readiness_check() -> JSONResponse:
+    health = health_check()
+    return JSONResponse(
+        status_code=200 if health["ready_for_inference"] else 503,
+        content=health,
+    )
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=443, reload=True)
+    uvicorn.run(
+        "backend.main:app",
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "8000")),
+    )

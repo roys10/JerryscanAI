@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +20,17 @@ def atomic_json(path: Path, value: Any) -> None:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             json.dump(value, stream, indent=2)
             stream.write("\n")
-        os.replace(name, path)
+        # Windows can briefly deny replacement while another thread, antivirus,
+        # or an indexer has the previous JSON file open. Preserve atomic writes,
+        # but tolerate these transient locks instead of failing a long benchmark.
+        for attempt in range(8):
+            try:
+                os.replace(name, path)
+                break
+            except PermissionError:
+                if attempt == 7:
+                    raise
+                time.sleep(min(0.05 * (2**attempt), 0.5))
     finally:
         Path(name).unlink(missing_ok=True)
 

@@ -93,6 +93,11 @@
     color: #991b1b;
 }
 
+.badge-review {
+    background: #fef3c7;
+    color: #92400e;
+}
+
 .navbar {
     background: #0f172a;
     padding: 0;

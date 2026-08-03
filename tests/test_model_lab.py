@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -15,6 +16,7 @@ from model_lab.datasets import (
     select_samples,
 )
 from model_lab.benchmark import BenchmarkEngine, paired_model_summaries
+from model_lab.api import _convert_uploaded_image_to_png
 from model_lab.metrics import calculate_metrics
 from model_lab.patchcore_adapter import (
     PATCHCORE_TRANSFORM_CONTRACT,
@@ -24,7 +26,7 @@ from model_lab.patchcore_adapter import (
 from model_lab.preprocessing import PreprocessingResolver
 from model_lab.registry import ModelRegistry
 from model_lab.settings import LabSettings
-from model_lab.storage import ComparisonStore
+from model_lab.storage import ComparisonStore, atomic_json
 from training.datasets.create_dataset_manifest import build_rows, sha256_file, sha256_manifest, write_manifest
 from training.preprocessing.runtime import canonical_json_hash, resolve_live_config
 
@@ -175,6 +177,21 @@ class ModelLabDatasetTests(unittest.TestCase):
 
 
 class SharedPreprocessingRuntimeTests(unittest.TestCase):
+    def test_uploaded_image_conversion_releases_temporary_file(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            upload = root / "upload"
+            output = root / "original.png"
+            Image.new("L", (17, 19), 128).save(upload, format="BMP")
+
+            _convert_uploaded_image_to_png(upload, output)
+            upload.unlink()
+
+            self.assertFalse(upload.exists())
+            with Image.open(output) as converted:
+                self.assertEqual(converted.mode, "RGB")
+                self.assertEqual(converted.size, (17, 19))
+
     def test_patchcore_runtime_matches_training_bilinear_resize(self):
         self.assertEqual(PATCHCORE_TRANSFORM_CONTRACT["interpolation"], "bilinear")
 
@@ -330,6 +347,30 @@ class SharedPreprocessingRuntimeTests(unittest.TestCase):
 
 
 class ComparisonPersistenceTests(unittest.TestCase):
+    def test_atomic_json_retries_transient_windows_file_lock(self):
+        with TemporaryDirectory() as directory:
+            destination = Path(directory) / "status.json"
+            real_replace = __import__("os").replace
+            attempts = 0
+
+            def flaky_replace(source, target):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise PermissionError(5, "transient Windows file lock")
+                return real_replace(source, target)
+
+            with patch("model_lab.storage.os.replace", side_effect=flaky_replace), patch(
+                "model_lab.storage.time.sleep"
+            ):
+                atomic_json(destination, {"state": "running"})
+
+            self.assertEqual(attempts, 2)
+            self.assertEqual(
+                json.loads(destination.read_text(encoding="utf-8")),
+                {"state": "running"},
+            )
+
     def test_results_survive_store_recreation_and_truncated_tail(self):
         with TemporaryDirectory() as directory:
             settings = settings_for(Path(directory))

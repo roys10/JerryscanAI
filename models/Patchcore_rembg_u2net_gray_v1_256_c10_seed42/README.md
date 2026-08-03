@@ -1,8 +1,11 @@
-# PatchCore G01: U2-Net gray background
+# U2Net gray-background PatchCore
 
-Place the matching local artifacts here:
+This run's metadata is already included; add its matching `G01.ckpt`. Live inference runs U2Net,
+keeps and aligns the largest jerrycan mask, replaces the background with gray,
+then runs PatchCore.
 
-- `G01.ckpt` (ignored by Git)
-- `G01.metadata.json` (versioned after review)
-
-The required preprocessing contract is [`rembg_u2net_gray_v1.json`](../../training/preprocessing/configs/rembg_u2net_gray_v1.json). Live preprocessing also requires the ignored `models/preprocessing/rembg/u2net.onnx` artifact with the hash recorded in the preprocessing model registry. Calibration is pending and must not be fabricated.
+The backend first looks for `u2net.onnx` in this folder and otherwise uses the
+shared `models/preprocessing/rembg/u2net.onnx`. To copy a fully portable folder,
+place `u2net.onnx` beside `model.json`. The checkpoint and ONNX weight are
+ignored by Git. The missing validation threshold keeps results in
+`SHADOW / UNDECIDED`.

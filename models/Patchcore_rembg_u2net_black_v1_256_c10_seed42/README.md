@@ -1,8 +1,11 @@
-# PatchCore G01: U2-Net black background
+# U2Net black-background PatchCore
 
-Place the matching local artifacts here:
+This run's metadata is already included; add its matching `G01.ckpt`. Live inference runs the same
+U2Net mask and alignment used by the gray variant, but composites the aligned
+jerrycan on black before PatchCore.
 
-- `G01.ckpt` (ignored by Git)
-- `G01.metadata.json` (versioned after review)
-
-The required preprocessing contract is [`rembg_u2net_black_v1.json`](../../training/preprocessing/configs/rembg_u2net_black_v1.json). Live preprocessing resolves the versioned U2-Net parent contract and requires the ignored `models/preprocessing/rembg/u2net.onnx` artifact. Calibration is pending and must not be fabricated.
+The backend prefers a local `u2net.onnx` and otherwise uses
+`models/preprocessing/rembg/u2net.onnx`. Copy the ONNX file beside `model.json`
+when the folder must work by itself. Learned/local artifacts are ignored by
+Git. The threshold is intentionally `null`, so results are
+`SHADOW / UNDECIDED`.

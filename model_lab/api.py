@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,18 @@ async def _save_upload(upload: UploadFile, path: Path) -> None:
             stream.write(chunk)
 
 
+def _convert_uploaded_image_to_png(upload_path: Path, output_path: Path) -> None:
+    """Normalize an upload without leaving Pillow holding a Windows file handle."""
+    payload = upload_path.read_bytes()
+    with BytesIO(payload) as buffer, Image.open(buffer) as source:
+        source.load()
+        converted = source.convert("RGB")
+        try:
+            converted.save(output_path, format="PNG")
+        finally:
+            converted.close()
+
+
 @app.post("/api/models/upload")
 async def upload_model(
     checkpoint: UploadFile = File(...),
@@ -269,13 +282,16 @@ async def single_image(model_id: str, image: UploadFile = File(...)) -> dict[str
         folder.mkdir(parents=True)
         temporary = folder / "upload"
         await _save_upload(image, temporary)
-        with Image.open(temporary) as source:
-            source.convert("RGB").save(original, format="PNG")
+        _convert_uploaded_image_to_png(temporary, original)
         temporary.unlink(missing_ok=True)
         resolver = PreprocessingResolver(model, settings)
-        input_path, mask_path, provenance = resolver.process_untracked(
-            Image.open(original).convert("RGB"), folder
-        )
+        with Image.open(original) as stored:
+            stored.load()
+            normalized = stored.convert("RGB")
+        try:
+            input_path, mask_path, provenance = resolver.process_untracked(normalized, folder)
+        finally:
+            normalized.close()
         output = PatchCoreAdapter(model).predict(input_path)
         raw_map = folder / "raw_anomaly_map.npy"
         np.save(raw_map, output.raw_anomaly_map, allow_pickle=False)

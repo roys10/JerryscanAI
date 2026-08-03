@@ -4,7 +4,11 @@ import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, Refr
 import './Inspection.css';
 import './History.css';
 
-const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:443';
+const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
+function ResultImage({ src, ...props }) {
+  return src ? <img src={src} {...props} /> : null;
+}
 
 function App() {
   // Navigation
@@ -18,13 +22,12 @@ function App() {
       server: 'smtp.gmail.com',
       port: 587,
       user: '',
-      password: ''
+      password_configured: false
     },
     alerts: []
   });
   const [editingRule, setEditingRule] = useState(null);
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
 
   // Console State
@@ -34,7 +37,7 @@ function App() {
 
   // History State
   const [history, setHistory] = useState([]);
-  const [stats, setStats] = useState({ total: 0, passes: 0, fails: 0, pass_rate: 0 });
+  const [stats, setStats] = useState({ total: 0, passes: 0, faults: 0, reviews: 0, shadow: 0, system_errors: 0, pass_rate: null });
   const [filter, setFilter] = useState('all'); // 'all', 'PASS', 'FAIL'
 
   // Multi-Model State
@@ -45,9 +48,6 @@ function App() {
   const [activeAngle, setActiveAngle] = useState('G01');
   const angles = [
     { id: 'G01', label: 'G01' },
-    { id: 'G02', label: 'G02' },
-    { id: 'G03', label: 'G03' },
-    { id: 'G04', label: 'G04' },
   ];
 
   // View Mode State
@@ -58,7 +58,7 @@ function App() {
 
   // Get current angle's data or empty object
   const currentData = angleData[activeAngle] || {};
-  const { selectedFile, previewUrl, result } = currentData;
+  const { previewUrl, result } = currentData;
 
   useEffect(() => {
     fetchModels();
@@ -157,17 +157,6 @@ function App() {
   const handleFileChange = (event) => {
     const file = event.target.files[0];
     processFile(file);
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      processFile(e.dataTransfer.files[0]);
-    }
   };
 
   const processFile = (file) => {
@@ -392,7 +381,8 @@ function App() {
                 let statusColor = '#9ca3af';
                 if (status === 'PASS') statusColor = '#10b981';
                 if (status === 'FAIL') statusColor = '#ef4444';
-                if (status === 'UNAVAILABLE') statusColor = '#f59e0b';
+                if (status === 'UNAVAILABLE' || status === 'REVIEW') statusColor = '#f59e0b';
+                if (status === 'SHADOW') statusColor = '#3b82f6';
 
                 return (
                   <div
@@ -460,7 +450,7 @@ function App() {
             {result && result.status !== 'UNAVAILABLE' && (
               <div style={{ display: 'flex', gap: '0.5rem', background: '#f3f4f6', padding: '0.25rem', borderRadius: '0.375rem' }}>
                 <button onClick={() => setViewMode('heatmap')} style={{ border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', background: viewMode === 'heatmap' ? 'white' : 'transparent', borderRadius: '0.25rem' }}>Anomaly Map</button>
-                <button onClick={() => setViewMode('segmentation')} style={{ border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', background: viewMode === 'segmentation' ? 'white' : 'transparent', borderRadius: '0.25rem' }}>Pred Mask</button>
+                {result.segmentation_image && <button onClick={() => setViewMode('segmentation')} style={{ border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', background: viewMode === 'segmentation' ? 'white' : 'transparent', borderRadius: '0.25rem' }}>Preprocessing Mask</button>}
               </div>
             )}
           </div>
@@ -474,23 +464,24 @@ function App() {
           ) : (
             <div className="preview-container">
               {result ? (
-                result.status === 'UNAVAILABLE' ? (
+                ['UNAVAILABLE', 'REVIEW', 'SYSTEM_ERROR'].includes(result.status) ? (
                   <div style={{ textAlign: 'center', color: 'white' }}>
                     <AlertCircle size={48} color="#f59e0b" />
-                    <h3 style={{ color: '#f59e0b', margin: '0.5rem 0' }}>Model Unavailable</h3>
-                    <p style={{ margin: '0.5rem 0' }}>No AI model loaded for this angle.</p>
-                    {result.original_image && <img src={result.original_image} style={{ maxWidth: '200px', opacity: 0.5 }} />}
+                    <h3 style={{ color: '#f59e0b', margin: '0.5rem 0' }}>Review Required</h3>
+                    <p style={{ margin: '0.5rem 0' }}>{result.error?.detail || 'No safe inspection decision is available.'}</p>
+                    {result.original_image && <ResultImage src={result.original_image} alt="Inspection evidence" style={{ maxWidth: '200px', opacity: 0.5 }} />}
                   </div>
                 ) : (
                   <>
-                    <div className={`status-badge ${result.status === 'PASS' ? 'status-pass' : 'status-fail'}`}>
-                      {result.status} ({result.score_percentage?.toFixed(1)}%)
+                    <div className={`status-badge ${result.status === 'PASS' ? 'status-pass' : result.status === 'FAIL' ? 'status-fail' : 'status-review'}`}>
+                      {result.status}
+                      {Number.isFinite(result.raw_image_score) && ` · raw score ${result.raw_image_score.toFixed(4)}`}
                     </div>
-                    <img src={viewMode === 'heatmap' ? result.heatmap_image : result.segmentation_image} className="preview-image" />
+                    <ResultImage src={viewMode === 'heatmap' || !result.segmentation_image ? result.heatmap_image : result.segmentation_image} alt="Inspection visualization" className="preview-image" />
                   </>
                 )
               ) : (
-                <img src={previewUrl} className="preview-image" />
+                <ResultImage src={previewUrl} alt="Uploaded jerrycan" className="preview-image" />
               )}
             </div>
           )}
@@ -508,7 +499,7 @@ function App() {
         </div>
         <div className="stat-card">
           <h4>Pass Rate</h4>
-          <div className="stat-value">{stats.pass_rate?.toFixed(1)}%</div>
+          <div className="stat-value">{stats.pass_rate == null ? 'N/A' : `${stats.pass_rate.toFixed(1)}%`}</div>
         </div>
         <div className="stat-card">
           <h4>Passes</h4>
@@ -516,7 +507,15 @@ function App() {
         </div>
         <div className="stat-card fail">
           <h4>Defects Found</h4>
-          <div className="stat-value" style={{ color: '#ef4444' }}>{stats.fails}</div>
+          <div className="stat-value" style={{ color: '#ef4444' }}>{stats.faults}</div>
+        </div>
+        <div className="stat-card">
+          <h4>Needs Review</h4>
+          <div className="stat-value" style={{ color: '#f59e0b' }}>{stats.reviews}</div>
+        </div>
+        <div className="stat-card">
+          <h4>Shadow / System</h4>
+          <div className="stat-value" style={{ color: '#3b82f6' }}>{(stats.shadow || 0) + (stats.system_errors || 0)}</div>
         </div>
       </div>
 
@@ -531,6 +530,9 @@ function App() {
             <option value="all">All Results</option>
             <option value="PASS">Pass Only</option>
             <option value="FAIL">Fail Only</option>
+            <option value="REVIEW">Review Only</option>
+            <option value="SHADOW">Shadow Only</option>
+            <option value="SYSTEM_ERROR">System Errors</option>
           </select>
         </div>
         <div style={{ color: 'var(--text-muted)' }}>Showing last {history.length} records</div>
@@ -573,13 +575,13 @@ function App() {
                 <td><code style={{ fontSize: '0.75rem' }}>{session.id.split('-')[0]}...</code></td>
                 <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{session.model_name || 'Standard'}</td>
                 <td>
-                  <span className={`status-row-badge ${session.overall_status === 'PASS' ? 'badge-pass' : 'badge-fail'}`}>
+                  <span className={`status-row-badge ${session.overall_status === 'PASS' ? 'badge-pass' : session.overall_status === 'FAIL' ? 'badge-fail' : 'badge-review'}`}>
                     {session.overall_status}
                   </span>
                 </td>
                 <td>
                   <div style={{ display: 'flex', gap: '4px' }}>
-                    {[['G01', 'G01'], ['G02', 'G02'], ['G03', 'G03'], ['G04', 'G04']].map(([id, label]) => (
+                    {[['G01', 'G01']].map(([id, label]) => (
                       <div key={id} style={{
                         width: 14, height: 14, borderRadius: '2px', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white',
                         background: !session.angles[id] ? '#e5e7eb' : (session.angles[id].status === 'PASS' ? '#10b981' : (session.angles[id].status === 'FAIL' ? '#ef4444' : '#f59e0b'))
@@ -746,8 +748,10 @@ function App() {
               <input type="text" value={systemSettings.smtp.user} onChange={(e) => setSystemSettings({ ...systemSettings, smtp: { ...systemSettings.smtp, user: e.target.value } })} className="modal-input" />
             </div>
             <div className="form-group">
-              <label>App Password</label>
-              <input type="password" value={systemSettings.smtp.password} onChange={(e) => setSystemSettings({ ...systemSettings, smtp: { ...systemSettings.smtp, password: e.target.value } })} className="modal-input" />
+              <label>SMTP Credential</label>
+              <div className="modal-input" style={{ color: 'var(--text-muted)' }}>
+                {systemSettings.smtp.password_configured ? 'Configured securely by environment' : 'Not configured — set SMTP_PASSWORD on the server'}
+              </div>
             </div>
           </div>
           <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>

@@ -135,6 +135,7 @@ function Metric({ label, value, note }) { return <div className="metric"><span>{
 function Results({ comparisons, selectedId, selectComparison }) {
   const [detail, setDetail] = useState(null)
   const [sampleId, setSampleId] = useState(null)
+  const [resumeMessage, setResumeMessage] = useState('')
   useEffect(() => {
     if (!selectedId) return
     let active = true
@@ -142,11 +143,19 @@ function Results({ comparisons, selectedId, selectComparison }) {
     load(); const timer = setInterval(load, 2500)
     return () => { active = false; clearInterval(timer) }
   }, [selectedId, sampleId])
+  const resume = async () => {
+    setResumeMessage('Requesting resume…')
+    try {
+      await api(`/api/comparisons/${selectedId}/resume`, { method: 'POST' })
+      setResumeMessage('Resume requested. Completed evaluations will be skipped.')
+    } catch (error) { setResumeMessage(error.message) }
+  }
   const sampleRows = useMemo(() => detail?.results.filter(row => row.sample_id === sampleId) || [], [detail, sampleId])
   return <section><div className="heading"><div><p className="eyebrow">Saved results</p><h2>Comparison history</h2><p>Runs persist independently of this browser and can resume after interruption.</p></div></div>
     <div className="results-layout"><aside className="run-list">{comparisons.map(run => <button key={run.comparison_id} className={run.comparison_id === selectedId ? 'active' : ''} onClick={() => selectComparison(run.comparison_id)}><span><strong>{run.name}</strong><small>{run.image_count} images · seed {run.seed}</small></span><em>{run.state}</em></button>)}</aside>
       <div>{!detail ? <div className="empty">Select a saved comparison.</div> : <>
-        <div className="run-header"><div><h3>{detail.config.name}</h3><p>{detail.config.split} · {detail.status.completed}/{detail.status.total || '?'} evaluations</p></div><span className={`status ${detail.status.state === 'completed' ? 'ready' : 'incomplete'}`}><Activity size={14}/>{detail.status.state}</span></div>
+        <div className="run-header"><div><h3>{detail.config.name}</h3><p>{detail.config.split} · {detail.status.completed}/{detail.status.total || '?'} evaluations</p></div><div className="run-controls"><span className={`status ${detail.status.state === 'completed' ? 'ready' : 'incomplete'}`}><Activity size={14}/>{detail.status.state}</span>{['failed', 'incomplete'].includes(detail.status.state) && <button className="secondary" onClick={resume}>Resume</button>}</div></div>
+        {resumeMessage && <p className="notice">{resumeMessage}</p>}
         {detail.config.warnings?.map(warning => <p className="notice" key={warning}>{warning}</p>)}
         {detail.summary && Object.entries(detail.summary).map(([modelId, summary]) => <article className="summary" key={modelId}><h3>{modelId}</h3>{summary.excluded_unpaired_count > 0 && <p className="error">Incomplete paired coverage: {summary.excluded_unpaired_count} samples excluded. Resume to retry errors.</p>}<div className="metric-grid"><Metric label="Paired samples" value={summary.paired_sample_count}/><Metric label="False-positive rate" value={metricText(summary.false_positive_rate, true)} note={summary.false_positive_rate.reason}/><Metric label="Median raw score" value={summary.raw_score?.median.toFixed(5) ?? 'N/A'}/><Metric label="p99 raw score" value={summary.raw_score?.p99.toFixed(5) ?? 'N/A'}/><Metric label="p95 total latency" value={summary.total_ms ? `${summary.total_ms.p95.toFixed(1)} ms` : 'N/A'}/><Metric label="AUROC" value={metricText(summary.auroc)} note={summary.auroc.reason}/><Metric label="Recall" value={metricText(summary.recall)} note={summary.recall.reason}/></div></article>)}
         {detail.results.length > 0 && <><div className="sample-toolbar"><label>Sample explorer<select value={sampleId || ''} onChange={e => setSampleId(e.target.value)}>{[...new Set(detail.results.map(row => row.sample_id))].map(id => <option key={id}>{id}</option>)}</select></label></div>

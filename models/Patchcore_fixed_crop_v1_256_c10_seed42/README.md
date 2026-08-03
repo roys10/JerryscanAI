@@ -1,8 +1,10 @@
-# PatchCore G01: fixed crop
+# Fixed-crop PatchCore
 
-Place the matching local artifacts here:
+This run's reviewed metadata is already included. Add its matching `G01.ckpt`,
+which stays local and is ignored by Git. The tracked `model.json` applies the same fixed G01 crop
+used to generate the training dataset, then letterboxes that crop to 1024 x
+1024 before PatchCore inference.
 
-- `G01.ckpt` (ignored by Git)
-- `G01.metadata.json` (versioned after review)
-
-The required preprocessing contract is [`fixed_crop_v1.json`](../../training/preprocessing/configs/fixed_crop_v1.json). Calibration is pending and must not be fabricated.
+Use original production-camera frames. A resized upload can be too small for
+the recorded crop and will correctly return `REVIEW`. The threshold remains
+`null`, so this model cannot emit an automatic PASS/FAIL decision.

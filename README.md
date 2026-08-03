@@ -6,13 +6,13 @@ PatchCore is the only model family supported by the current training and Model L
 
 ## Repository areas
 
-- `backend/`: FastAPI manufacturing-line API, inspection history, alerts, and current production inference.
+- `backend/`: FastAPI manufacturing-line API, inspection history, alerts, and local inference.
 - `frontend/`: React/Vite manufacturing-line interface.
 - `training/`: frozen dataset manifests, derivative generation, preprocessing runtime, and PatchCore training.
 - `data_manifests/`: versioned raw-sample identities and split assignments. Images are stored outside Git.
 - `model_lab/`: independent FastAPI and React/Vite PatchCore comparison application.
-- `models/`: versioned model-folder documentation and local model/preprocessing artifacts. See [models/README.md](models/README.md); large weights are ignored by Git.
-- `tests/`: dataset, preprocessing, training, and Model Lab safeguards.
+- `models/`: model-folder contracts and local model/preprocessing artifacts. See [models/README.md](models/README.md); learned artifacts are ignored by Git.
+- `tests/`: dataset, preprocessing, training, runtime, and Model Lab safeguards.
 
 Read [AGENTS.md](AGENTS.md) before contributing. Model experiments must follow [docs/model-development.md](docs/model-development.md), preprocessing must follow [docs/preprocessing.md](docs/preprocessing.md), and training commands are documented in [training/README.md](training/README.md).
 
@@ -28,13 +28,43 @@ Frontend dependencies are installed separately in their respective application d
 
 ## Manufacturing application
 
-Start the production API from the repository root:
+The current manufacturing runtime is intentionally simple and G01-only. You
+choose one model by pointing the backend at its folder. For every original
+camera image, the backend runs that folder's preprocessing and PatchCore
+checkpoint, then returns the raw anomaly score and a display heatmap.
+The original G01 contract is exactly 1025 x 1281 pixels; resized or already
+preprocessed images are rejected before preprocessing.
+
+Each usable folder has this shape:
+
+```text
+models/Patchcore_<preprocessing>_256_c10_seed42/
+|-- model.json             # tracked runtime and preprocessing contract
+|-- README.md              # tracked setup note
+|-- G01.metadata.json      # tracked training/reproducibility record
+|-- G01.ckpt               # supplied locally; ignored by Git
+```
+
+Each current folder already includes its matching metadata; normally you add
+only that run's `G01.ckpt`. The rembg folders also need `u2net.onnx`. They first look beside `model.json`,
+which makes the folder portable, then fall back to the shared
+`models/preprocessing/rembg/u2net.onnx` copy.
+
+In PowerShell, select a folder and start the API:
 
 ```powershell
+$env:JERRYSCAN_MODEL_FOLDER = (Resolve-Path "models/Patchcore_rembg_u2net_black_v1_256_c10_seed42")
+uv sync --extra preprocess-rembg
 uv run uvicorn backend.main:app --reload
 ```
 
-Start the production frontend in another terminal:
+Open `http://127.0.0.1:8000/health`. A complete folder reports
+`shadow_ready`; a missing or mismatched artifact reports the exact problem and
+inspection requests return `REVIEW`, never `PASS`.
+On startup, the backend verifies the checkpoint and any U2Net weight against
+the SHA-256 and byte size recorded in `model.json` before either model is loaded.
+
+Start the frontend in another terminal:
 
 ```powershell
 cd frontend
@@ -42,26 +72,28 @@ npm install
 npm run dev
 ```
 
-Model checkpoints are currently discovered from subdirectories under `models/`, with one checkpoint per camera angle:
+The four current checkpoints are not calibrated on labeled defects. Their
+`exploratory_threshold` is therefore `null`, so successful inference reports
+`SHADOW / UNDECIDED`. A future threshold may be written into `model.json` only
+after validation; even then this local runtime labels it exploratory rather
+than claiming a qualified production decision.
 
-```text
-models/
-└── <model-set>/
-    ├── G01.ckpt
-    ├── G02.ckpt
-    ├── G03.ckpt
-    └── G04.ckpt
-```
+For Docker, set `JERRYSCAN_MODEL_NAME` to a folder name and run
+`docker compose up --build`. Compose mounts `models/` read-only and keeps
+settings/history under ignored `runtime-data/`.
 
-> [!WARNING]
-> The production inference path has not yet been migrated to the new immutable preprocessing and calibration contracts used by Model Lab. A model registered successfully in Model Lab is not automatically production-ready. Complete an end-to-end GPU validation and production inference migration before deployment, especially for fixed-crop or segmentation-based preprocessing.
+For a normal local run, non-secret alert settings live in
+`backend/config.json`. You may edit the SMTP server/user, recipients, webhook,
+and alert rules there. Keep the SMTP password out of JSON and provide it only
+through the `SMTP_PASSWORD` environment variable. Docker overrides the config
+path so container settings persist under `runtime-data/`.
 
-For container deployment, use the repository's Docker configuration:
-
-```bash
-docker compose pull
-docker compose up -d
-```
+The original `.github/workflows/deploy.yml` workflow is retained. A push to
+`backend-CD` builds `ghcr.io/roys10/jerryscanai:latest`, copies Compose to the
+configured remote server, and restarts the backend. It does not run the local
+test suite. Because checkpoints and ONNX weights are ignored by Git, the
+selected model folder and its large artifacts must already exist in the remote
+server's `~/jerryscanai/models` directory.
 
 ## Model Lab
 
@@ -122,7 +154,7 @@ The old `model_lab/app.py` Streamlit interface remains temporarily as a legacy e
 
 Raw images are immutable and remain outside Git. Frozen manifests select raw sample identities before preprocessing, and every derivative inherits the same split.
 
-The shared preprocessing runtime is used by batch derivative generation and Model Lab live preprocessing. Current configurations include raw letterboxing, fixed crop, U2Net/rembg background replacement, and prepared SAM support. PatchCore training consumes audited derivative datasets and records checkpoint metadata next to each model.
+The shared preprocessing runtime is used by batch derivative generation, Model Lab live preprocessing, and the local manufacturing runtime. Current configurations include raw letterboxing, fixed crop, U2Net/rembg background replacement, and prepared SAM support. PatchCore training consumes audited derivative datasets and records checkpoint metadata next to each model.
 
 See [training/README.md](training/README.md) for exact commands and [docs/training-experiment-log.md](docs/training-experiment-log.md) for the recorded experiment history.
 
@@ -134,10 +166,14 @@ Run the Python test suite with:
 uv run python -m unittest discover -s tests
 ```
 
-Verify the Model Lab frontend with:
+Verify both frontends with:
 
 ```powershell
-cd model_lab/frontend
+cd frontend
+npm run lint
+npm run build
+
+cd ../model_lab/frontend
 npm run lint
 npm run build
 ```

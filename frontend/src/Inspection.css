@@ -381,3 +381,8 @@
 .nav-icon-btn:hover {
     background: #1e293b;
 }
+
+.status-review {
+  background: #2563eb;
+  color: white;
+}

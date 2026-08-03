@@ -15,7 +15,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from training.datasets.create_dataset_manifest import sha256_manifest
+from training.datasets.create_dataset_manifest import sha256_file, sha256_manifest
 
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
@@ -342,6 +342,8 @@ def main() -> int:
     peak_cuda_allocated = torch.cuda.max_memory_allocated() if uses_cuda else None
     peak_cuda_reserved = torch.cuda.max_memory_reserved() if uses_cuda else None
     engine.trainer.save_checkpoint(output_ckpt)
+    checkpoint_sha256 = sha256_file(output_ckpt)
+    checkpoint_size_bytes = output_ckpt.stat().st_size
 
     project_root = Path(__file__).resolve().parents[2]
     gpu_properties = torch.cuda.get_device_properties(0) if uses_cuda else None
@@ -399,6 +401,10 @@ def main() -> int:
         "git": git_state(project_root),
         "command": sys.argv,
         "checkpoint": str(output_ckpt),
+        "checkpoint_artifact": {
+            "sha256": checkpoint_sha256,
+            "size_bytes": checkpoint_size_bytes,
+        },
     }
     output_metadata.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(f"Saved checkpoint: {output_ckpt}")

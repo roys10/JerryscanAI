@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "id": "Patchcore_raw_letterbox_v1_256_c10_seed42",
+    "family": "patchcore",
+    "angle": "G01",
+    "image_size": 256
+  },
+  "input": {
+    "width": 1025,
+    "height": 1281
+  },
+  "artifacts": {
+    "checkpoint": {
+      "file": "G01.ckpt",
+      "sha256": "c9eedd6ae17aca56f916eef7b7d2f3e1c165b7aed7c75424067e634e08b1f159",
+      "size_bytes": 1356221555
+    },
+    "metadata": "G01.metadata.json"
+  },
+  "preprocessing": {
+    "id": "raw_letterbox_v1",
+    "config": {
+      "schema_version": "1.0",
+      "preprocessing_id": "raw_letterbox_v1",
+      "backend": "raw_letterbox",
+      "output_size": [1024, 1024],
+      "background_value": 128,
+      "resize_policy": "contain",
+      "image_interpolation": "lanczos",
+      "input_color_policy": "grayscale_replicated_to_rgb",
+      "output_format": "png"
+    },
+    "weight": null
+  },
+  "exploratory_threshold": null,
+  "max_image_bytes": 26214400
+}

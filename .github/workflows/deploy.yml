@@ -16,14 +16,13 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -35,7 +34,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build-and-push
-    
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -48,7 +47,7 @@ jobs:
           password: ${{ secrets.HOST_PASSWORD }}
           script: |
             mkdir -p ~/jerryscanai/models
-            mkdir -p ~/jerryscanai/results
+            mkdir -p ~/jerryscanai/runtime-data
             mkdir -p ~/jerryscanai/backend
 
       - name: Copy docker-compose.yml to Remote Server
@@ -69,25 +68,16 @@ jobs:
           script: |
             cd ~/jerryscanai
 
-            # 1. Create a deployment script to run all docker commands
+            # Create one script so all Docker commands run under sudo.
             cat << 'EOF' > deploy.sh
             #!/bin/bash
-            
-            # Log in to GHCR
+
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # Pull the latest image and restart the container
             docker compose pull
             docker compose up -d
-            
-            # Clean up old unused images to save space
             docker image prune -a -f
             EOF
-            
+
             chmod +x deploy.sh
-            
-            # 2. Execute the entire script as sudo, passing the password via stdin
             echo "${{ secrets.HOST_PASSWORD }}" | sudo -S ./deploy.sh
-            
-            # 3. Clean up the script so it doesn't leave secrets behind
             rm deploy.sh

@@ -1,8 +1,10 @@
-# PatchCore G01: raw letterbox
+# Raw-letterbox PatchCore
 
-Place the matching local artifacts here:
+This folder is one complete local inference choice. Its reviewed training
+metadata is already included; add the matching `G01.ckpt`, which stays local
+and is ignored by Git. The tracked `model.json` tells the backend to
+letterbox each original G01 camera image onto a 1024 x 1024 gray canvas before
+running PatchCore.
 
-- `G01.ckpt` (ignored by Git)
-- `G01.metadata.json` (versioned after review)
-
-The required preprocessing contract is [`raw_letterbox_v1.json`](../../training/preprocessing/configs/raw_letterbox_v1.json). Calibration is pending and must not be fabricated.
+Select it by setting `JERRYSCAN_MODEL_FOLDER` to this directory. The threshold
+is intentionally `null`, so results stay `SHADOW / UNDECIDED`.

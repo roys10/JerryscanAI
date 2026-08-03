@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "id": "Patchcore_fixed_crop_v1_256_c10_seed42",
+    "family": "patchcore",
+    "angle": "G01",
+    "image_size": 256
+  },
+  "input": {
+    "width": 1025,
+    "height": 1281
+  },
+  "artifacts": {
+    "checkpoint": {
+      "file": "G01.ckpt",
+      "sha256": "2a77fd628827e75911ff8c8bf55d5a173404feba7c0f1694b4bf20bea366f181",
+      "size_bytes": 1356221555
+    },
+    "metadata": "G01.metadata.json"
+  },
+  "preprocessing": {
+    "id": "fixed_crop_v1",
+    "config": {
+      "schema_version": "1.0",
+      "preprocessing_id": "fixed_crop_v1",
+      "backend": "fixed_crop",
+      "crop_xyxy": [0, 0, 780, 1200],
+      "crop_basis": "conservative_bounds_from_training_u2net_mask_audit",
+      "output_size": [1024, 1024],
+      "background_value": 128,
+      "resize_policy": "contain",
+      "image_interpolation": "lanczos",
+      "input_color_policy": "grayscale_replicated_to_rgb",
+      "output_format": "png"
+    },
+    "weight": null
+  },
+  "exploratory_threshold": null,
+  "max_image_bytes": 26214400
+}

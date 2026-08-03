@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "id": "Patchcore_rembg_u2net_gray_v1_256_c10_seed42",
+    "family": "patchcore",
+    "angle": "G01",
+    "image_size": 256
+  },
+  "input": {
+    "width": 1025,
+    "height": 1281
+  },
+  "artifacts": {
+    "checkpoint": {
+      "file": "G01.ckpt",
+      "sha256": "fd9713c713658410d1be0278cf944655a7d78a569708b08b3d47d739fab7069b",
+      "size_bytes": 1356221555
+    },
+    "metadata": "G01.metadata.json"
+  },
+  "preprocessing": {
+    "id": "rembg_u2net_gray_v1",
+    "config": {
+      "schema_version": "1.0",
+      "preprocessing_id": "rembg_u2net_gray_v1",
+      "backend": "rembg",
+      "model_name": "u2net",
+      "model_filename": "u2net.onnx",
+      "output_size": [1024, 1024],
+      "background_value": 128,
+      "input_color_policy": "grayscale_replicated_to_rgb",
+      "mask_threshold": 128,
+      "mask_dilation_px": 0,
+      "rembg_post_process_mask": false,
+      "valid_mask_area_ratio": [0.2, 0.85],
+      "fail_on_quality_flags": ["mask_area_out_of_range"],
+      "keep_largest_component": true,
+      "preserve_mask_holes": true,
+      "bbox_padding_ratio": 0.01,
+      "object_scale": 0.9,
+      "object_center": [0.5, 0.48],
+      "image_interpolation": "lanczos",
+      "mask_interpolation": "nearest",
+      "composite_mode": "hard_gray",
+      "output_format": "png"
+    },
+    "weight": {
+      "file": "u2net.onnx",
+      "shared_fallback": "../preprocessing/rembg/u2net.onnx",
+      "sha256": "8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491",
+      "size_bytes": 175997641
+    }
+  },
+  "exploratory_threshold": null,
+  "max_image_bytes": 26214400
+}
