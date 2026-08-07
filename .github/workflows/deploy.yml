@@ -59,6 +59,21 @@ jobs:
           source: "docker-compose.yml"
           target: "~/jerryscanai"
 
+      - name: Create backend/.env on Remote Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST_IP }}
+          username: ${{ secrets.HOST_USERNAME }}
+          password: ${{ secrets.HOST_PASSWORD }}
+          script: |
+            mkdir -p ~/jerryscanai/backend
+            cat > ~/jerryscanai/backend/.env << 'EOF'
+            JERRYSCAN_MODEL_FOLDER=/app/models/Patchcore_rembg_u2net_black_v1_256_c10_seed42
+            SMTP_USER=${{ secrets.SMTP_USER }}
+            SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+            EOF
+            chmod 600 ~/jerryscanai/backend/.env
+
       - name: Deploy to Remote Linux Server
         uses: appleboy/ssh-action@v1.0.3
         with:

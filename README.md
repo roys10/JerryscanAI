@@ -96,8 +96,10 @@ Values at or below 70% are `FAIL`. This index is a monotonic presentation of
 the same raw-score rule, not confidence, probability, accuracy, or a second
 decision threshold.
 
-For Docker, set `JERRYSCAN_MODEL_NAME` to a folder name and run
-`docker compose up --build`. Compose mounts `models/` read-only and keeps
+For Docker, create `backend/.env` from `backend/.env.example` and run
+`docker compose up --build`. Compose loads it as the container environment,
+mounts the same file read-only for the backend, mounts
+`models/` read-only, and keeps
 runtime files under `runtime-data/`. Inspection history is stored in the active
 `runtime-data/inspections_history.db` SQLite database. This project keeps that
 same database file in Git as requested; `settings.json` and SQLite's temporary
@@ -111,7 +113,9 @@ path so container settings persist under `runtime-data/`.
 
 The original `.github/workflows/deploy.yml` workflow is retained. A push to
 `backend-CD` builds `ghcr.io/roys10/jerryscanai:latest`, copies Compose to the
-configured remote server, and restarts the backend. It does not run the local
+configured remote server, creates `backend/.env` from the `SMTP_USER` and
+`SMTP_PASSWORD` GitHub secrets plus the selected container model path, and
+restarts the backend. It does not run the local
 test suite. Because checkpoints and ONNX weights are ignored by Git, the
 selected model folder and its large artifacts must already exist in the remote
 server's `~/jerryscanai/models` directory.

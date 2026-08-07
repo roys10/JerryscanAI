@@ -64,6 +64,7 @@ wandb/
 *.pth
 *.pt
 *.onnx
+*.rar
 *.weights
 *.h5
 
