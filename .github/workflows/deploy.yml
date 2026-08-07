@@ -81,18 +81,20 @@ jobs:
           username: ${{ secrets.HOST_USERNAME }}
           password: ${{ secrets.HOST_PASSWORD }}
           script: |
+            set -eu
             cd ~/jerryscanai
 
             # Create one script so all Docker commands run under sudo.
             cat << 'EOF' > deploy.sh
             #!/bin/bash
+            set -euo pipefail
 
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker compose pull
-            docker compose up -d
+            docker compose up -d --wait --wait-timeout 120
             docker image prune -a -f
             EOF
 
             chmod +x deploy.sh
+            trap 'rm -f deploy.sh' EXIT
             echo "${{ secrets.HOST_PASSWORD }}" | sudo -S ./deploy.sh
-            rm deploy.sh
