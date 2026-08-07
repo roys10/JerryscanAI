@@ -130,9 +130,11 @@ current PatchCore workflow:
 Important limitations remain. PatchCore is still the only supported model
 family in the current lab path, pixel/region metrics require reviewed defect
 masks, and none of the four current G01 models has a threshold calibrated with
-real labeled faults. Consequently, current normal-only comparisons can measure
-score drift and false-positive behavior but cannot establish the best defect
-detector or qualify production PASS/FAIL decisions.
+enough real labeled faults. Their provisional per-model raw-score thresholds
+are ceilings above the maximum score on the 994 normal validation images, so
+they establish an observed validation false-positive operating point only.
+Current normal-only comparisons cannot establish the best defect detector or
+qualify defect recall scientifically.
 
 Anomalib already provides model-aware preprocessing, postprocessing, evaluators, and deployment inference. Prefer those interfaces over reconstructing calibration from checkpoint attributes ([deployment guide](https://anomalib.readthedocs.io/en/stable/markdown/guides/reference/deploy/), [metrics reference](https://anomalib.readthedocs.io/en/latest/markdown/guides/reference/metrics/index.html)).
 

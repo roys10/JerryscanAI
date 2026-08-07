@@ -8,10 +8,19 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .local_model import (
-    InspectionReviewError,
+    InferenceRuntimeError,
+    InspectionInputError,
     LocalModelManifest,
     LocalPatchCoreRuntime,
 )
+
+
+class ModelNotReadyError(RuntimeError):
+    """No validated local model is available for inspection."""
+
+
+class ModelSelectionError(ValueError):
+    """The caller requested a model other than the selected local model."""
 
 
 class JerryScanModelManager:
@@ -75,32 +84,9 @@ class JerryScanModelManager:
         with self._condition:
             return [self.runtime.model_id] if self.runtime is not None else []
 
-    def _not_ready_result(self, angle: str) -> dict[str, Any]:
+    def _not_ready_message(self) -> str:
         with self._condition:
-            detail = self.startup_error or "No local model folder is loaded"
-        return {
-            "status": "REVIEW",
-            "system_status": "REVIEW",
-            "decision": "UNDECIDED",
-            "exploratory_decision": None,
-            "model_id": None,
-            "preprocessing_id": None,
-            "angle": angle,
-            "mode": "shadow",
-            "raw_image_score": None,
-            "score": None,
-            "image_threshold": None,
-            "quality_flags": [],
-            "error": {
-                "stage": "startup",
-                "code": "model_folder_not_ready",
-                "detail": detail,
-            },
-            "heatmap_image": None,
-            "segmentation_image": None,
-            "original_image": None,
-            "model_input_image": None,
-        }
+            return self.startup_error or "No local model folder is loaded"
 
     def inspect(
         self, angle: str, image_bytes: bytes, *, requested_model: str | None = None
@@ -111,28 +97,22 @@ class JerryScanModelManager:
                 runtime_key = id(runtime)
                 self._inflight[runtime_key] = self._inflight.get(runtime_key, 0) + 1
         if runtime is None:
-            return self._not_ready_result(angle)
+            raise ModelNotReadyError(self._not_ready_message())
         try:
             if requested_model and requested_model != runtime.model_id:
-                return runtime.review_result(
-                    InspectionReviewError(
-                        "routing",
-                        "inactive_model_requested",
-                        f"Requested model {requested_model!r} is not the selected folder",
-                    )
+                raise ModelSelectionError(
+                    f"Requested model {requested_model!r} is not the selected model "
+                    f"{runtime.model_id!r}"
                 )
             return runtime.predict(image_bytes, angle)
-        except InspectionReviewError as exc:
-            return runtime.review_result(exc)
+        except InspectionInputError as exc:
+            return runtime.wrong_input_result(exc)
+        except (ModelSelectionError, InferenceRuntimeError):
+            raise
         except Exception as exc:
-            return runtime.review_result(
-                InspectionReviewError(
-                    "inference",
-                    "unexpected_runtime_failure",
-                    f"{type(exc).__name__}: {exc}",
-                ),
-                system_error=True,
-            )
+            raise InferenceRuntimeError(
+                f"Unexpected inference failure: {type(exc).__name__}: {exc}"
+            ) from exc
         finally:
             with self._condition:
                 self._inflight[runtime_key] -= 1
@@ -153,13 +133,29 @@ class JerryScanModelManager:
                 "error": error or "No local model folder is loaded",
             }
         return {
-            "status": "shadow_ready",
+            "status": "ready",
             "ready_for_inference": True,
-            "ready_for_decisions": False,
+            "ready_for_decisions": True,
             "model_folder": str(runtime.manifest.folder),
             "model_id": runtime.model_id,
+            "display_name": getattr(
+                runtime, "model_display_name", runtime.model_id
+            ),
             "preprocessing_id": runtime.preprocessing_id,
             "angle": runtime.angle,
-            "mode": runtime.mode,
-            "exploratory_threshold": runtime.manifest.exploratory_threshold,
+            "inference_device": getattr(runtime, "inference_device", "unknown"),
+            "device_fallback_reason": getattr(
+                runtime, "device_fallback_reason", None
+            ),
+            "decision_threshold": {
+                "score": "raw_patchcore_image_score",
+                "value": runtime.manifest.decision_threshold,
+                "rule": "fail_if_score_greater_than_or_equal",
+                "provisional": True,
+            },
+            "quality_score": {
+                "failure_boundary_percentage": 70.0,
+                "rule": "fail_if_quality_less_than_or_equal",
+                "meaning": "relative_operator_index_not_probability",
+            },
         }

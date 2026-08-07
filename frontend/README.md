@@ -5,9 +5,23 @@ manufacturing backend. It is separate from the research Model Lab frontend.
 
 The current runtime supports original G01 camera images and exactly one active
 PatchCore model folder. The backend applies that model's preprocessing; do not
-upload a preprocessed derivative. Until a real-fault validation threshold is
-approved, successful inspections appear as `SHADOW / UNDECIDED`. Invalid
-inputs or unavailable artifacts require `REVIEW` rather than producing PASS.
+upload a preprocessed derivative. Successful inference returns `PASS` below
+the selected model's raw-score threshold and `FAIL` at or above it. Current
+per-model thresholds are provisional ceilings above each model's maximum
+normal validation score; they are not percentages and defect recall is not yet
+validated. Invalid images show `Wrong input`; unavailable model artifacts are
+reported as an API error rather than as a defective jerrycan.
+
+Successful results provide three separate views: **Defect Location** draws the
+main-style red anomaly contour, **Anomaly Map** shows the fixed-scale heatmap,
+and **Preprocessing Mask** shows the segmentation mask used to isolate and
+align the jerrycan. The PASS/FAIL badge is deliberately simple. Result details
+show a **Quality score** from 0% to 100%, where 100% means no measured anomaly
+and the failure threshold is 70%. The score is calculated as
+`clamp(100 - 30 * raw_score / raw_threshold, 0, 100)`, so the backend's raw
+decision threshold maps exactly to 70%. This is a relative quality index, not
+confidence, probability, or accuracy. Model Configuration shows the model name
+and the operator threshold as `70%`.
 
 ## Start locally
 

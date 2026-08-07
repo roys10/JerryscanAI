@@ -6,5 +6,8 @@ and is ignored by Git. The tracked `model.json` tells the backend to
 letterbox each original G01 camera image onto a 1024 x 1024 gray canvas before
 running PatchCore.
 
-Select it by setting `JERRYSCAN_MODEL_FOLDER` to this directory. The threshold
-is intentionally `null`, so results stay `SHADOW / UNDECIDED`.
+Select it by setting `JERRYSCAN_MODEL_FOLDER` to this directory. Its
+provisional raw PatchCore image-score threshold is 35, the ceiling above the
+maximum score observed across 994 normal `split_v2` validation images. This
+produced zero observed validation false positives; defect recall is not yet
+validated.

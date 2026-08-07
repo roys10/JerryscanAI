@@ -7,5 +7,7 @@ jerrycan on black before PatchCore.
 The backend prefers a local `u2net.onnx` and otherwise uses
 `models/preprocessing/rembg/u2net.onnx`. Copy the ONNX file beside `model.json`
 when the folder must work by itself. Learned/local artifacts are ignored by
-Git. The threshold is intentionally `null`, so results are
-`SHADOW / UNDECIDED`.
+Git. Its provisional raw PatchCore image-score threshold is 34, the ceiling
+above the maximum score observed across 994 normal `split_v2` validation
+images. This produced zero observed validation false positives; defect recall
+is not yet validated.

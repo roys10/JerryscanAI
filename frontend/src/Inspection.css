@@ -148,6 +148,18 @@
     cursor: not-allowed;
 }
 
+.batch-loading-spinner {
+    animation: batch-loading-spin 0.8s linear infinite;
+    flex-shrink: 0;
+    transform-origin: center;
+}
+
+@keyframes batch-loading-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .btn-secondary {
     background: white;
     border: 1px solid var(--border-color);
@@ -181,6 +193,37 @@
     object-fit: contain;
 }
 
+.result-view-toggle {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    background: #f3f4f6;
+}
+
+.result-view-toggle button {
+    border: 0;
+    border-radius: 0.375rem;
+    padding: 0.4rem 0.75rem;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.result-view-toggle button:hover {
+    color: var(--text-main);
+}
+
+.result-view-toggle button.active {
+    background: white;
+    color: var(--text-main);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
 .status-badge {
     position: absolute;
     top: 1rem;
@@ -209,6 +252,21 @@
 @media (max-width: 1024px) {
     .main-content {
         grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .result-view-toggle {
+        flex-wrap: wrap;
+    }
+
+    .result-summary {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .result-summary-explanation {
+        text-align: left;
     }
 }
 
@@ -257,41 +315,83 @@
     }
 }
 
-/* Multi-Model Selector Styling */
-.model-selector {
-    width: 100%;
+.model-configuration {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.model-configuration-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
     padding: 0.75rem;
-    background: white;
+    background: var(--bg-app);
     border: 1px solid var(--border-color);
     border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--text-main);
-    cursor: pointer;
-    transition: all 0.2s;
-    outline: none;
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 0.75rem center;
-    background-size: 1rem;
-    padding-right: 2.5rem;
 }
 
-.model-selector:hover:not(:disabled) {
-    border-color: var(--primary-color);
+.model-configuration-row span,
+.result-summary-label {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
 }
 
-.model-selector:focus {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
+.model-configuration-row strong {
+    overflow-wrap: anywhere;
+    font-size: 0.85rem;
 }
 
-.model-selector:disabled {
-    background-color: var(--bg-app);
-    cursor: not-allowed;
-    opacity: 0.8;
+.model-configuration-note {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    line-height: 1.45;
+}
+
+.result-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    margin-top: 1rem;
+    padding: 0.9rem 1rem;
+    background: var(--bg-app);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+}
+
+.result-summary > div:first-child {
+    display: flex;
+    flex-direction: column;
+    min-width: 8rem;
+}
+
+.result-summary strong {
+    font-size: 1.75rem;
+    line-height: 1.1;
+}
+
+.quality-pass {
+    color: #059669;
+}
+
+.quality-fail {
+    color: #dc2626;
+}
+
+.result-summary-explanation {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    text-align: right;
+}
+
+.result-summary-explanation span {
+    display: block;
+    margin-top: 0.15rem;
 }
 
 /* Modal Styling */
@@ -382,7 +482,7 @@
     background: #1e293b;
 }
 
-.status-review {
-  background: #2563eb;
+.status-wrong-input {
+  background: #f59e0b;
   color: white;
 }

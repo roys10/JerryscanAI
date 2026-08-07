@@ -10,12 +10,23 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
 
 from backend.inference.alerts import AlertManager
 from backend.inference.config import ConfigManager
 from backend.inference.history import HistoryManager
-from backend.inference.manager import JerryScanModelManager
+from backend.inference.local_model import InferenceRuntimeError
+from backend.inference.manager import (
+    JerryScanModelManager,
+    ModelNotReadyError,
+    ModelSelectionError,
+)
+
+
+# Load local backend settings before CORS and runtime managers read the
+# environment. Existing process-level variables keep precedence by default.
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 def _origins() -> list[str]:
@@ -65,23 +76,31 @@ async def _read_bounded(upload: UploadFile) -> bytes:
             break
         total += len(chunk)
         if total > maximum:
-            raise HTTPException(status_code=413, detail="Camera image is too large")
+            # Keep memory bounded but let the runtime return the normal
+            # WRONG_INPUT response shape for an oversized image.
+            chunks.append(chunk)
+            break
         chunks.append(chunk)
     return b"".join(chunks)
 
 
 def _overall_status(results: dict[str, dict[str, Any]]) -> str:
-    statuses = {result.get("status", "SYSTEM_ERROR") for result in results.values()}
-    for status in ("SYSTEM_ERROR", "REVIEW", "FAIL", "SHADOW"):
-        if status in statuses:
-            return status
-    return "PASS" if statuses == {"PASS"} else "SYSTEM_ERROR"
+    statuses = {result.get("status") for result in results.values()}
+    if not statuses.issubset({"PASS", "FAIL", "WRONG_INPUT"}):
+        raise RuntimeError(f"Unexpected inspection status: {sorted(map(str, statuses))}")
+    if "WRONG_INPUT" in statuses:
+        return "WRONG_INPUT"
+    return "FAIL" if "FAIL" in statuses else "PASS"
 
 
 async def _record(results: dict[str, dict[str, Any]]) -> tuple[str, str]:
     overall = _overall_status(results)
     model_id = next(
-        (result.get("model_id") for result in results.values() if result.get("model_id")),
+        (
+            result.get("model_display_name") or result.get("model_id")
+            for result in results.values()
+            if result.get("model_display_name") or result.get("model_id")
+        ),
         None,
     )
     session_id = await run_in_threadpool(
@@ -93,12 +112,19 @@ async def _record(results: dict[str, dict[str, Any]]) -> tuple[str, str]:
 
 async def _inspect_g01(upload: UploadFile, model_name: str | None) -> dict[str, Any]:
     contents = await _read_bounded(upload)
-    return await run_in_threadpool(
-        model_manager.inspect,
-        "G01",
-        contents,
-        requested_model=model_name,
-    )
+    try:
+        return await run_in_threadpool(
+            model_manager.inspect,
+            "G01",
+            contents,
+            requested_model=model_name,
+        )
+    except ModelNotReadyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ModelSelectionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except InferenceRuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/models")
@@ -129,7 +155,6 @@ async def inspect_batch(
         "session_id": session_id,
         "overall_status": overall,
         "angles": results,
-        "mode": result.get("mode", "shadow"),
         "required_angles": ["G01"],
     }
 
@@ -149,13 +174,24 @@ async def reload_model() -> dict[str, Any]:
     try:
         await run_in_threadpool(model_manager.load_selected)
     except Exception as exc:
-        raise HTTPException(status_code=409, detail=model_manager.health()) from exc
+        raise HTTPException(status_code=503, detail=model_manager.health()) from exc
     return model_manager.health()
 
 
 @app.get("/history")
 async def get_history(status: Optional[str] = None) -> list[dict[str, Any]]:
-    return history_manager.get_history(status=status)
+    try:
+        return history_manager.get_history(status=status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/history/{session_id}")
+async def get_history_session(session_id: str) -> dict[str, Any]:
+    session = history_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Inspection session not found")
+    return session
 
 
 @app.get("/stats")
@@ -176,12 +212,19 @@ async def simulate_trigger(model_name: Optional[str] = None) -> dict[str, Any]:
     )
     if image_path is None:
         raise HTTPException(status_code=404, detail="Required test_images/G01 image not found")
-    result = await run_in_threadpool(
-        model_manager.inspect,
-        "G01",
-        image_path.read_bytes(),
-        requested_model=model_name,
-    )
+    try:
+        result = await run_in_threadpool(
+            model_manager.inspect,
+            "G01",
+            image_path.read_bytes(),
+            requested_model=model_name,
+        )
+    except ModelNotReadyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ModelSelectionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except InferenceRuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     session_id, overall = await _record({"G01": result})
     return {
         "session_id": session_id,

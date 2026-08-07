@@ -2,6 +2,7 @@
   "schema_version": "1.0",
   "model": {
     "id": "Patchcore_raw_letterbox_v1_256_c10_seed42",
+    "display_name": "PatchCore - Raw image",
     "family": "patchcore",
     "angle": "G01",
     "image_size": 256
@@ -33,6 +34,18 @@
     },
     "weight": null
   },
-  "exploratory_threshold": null,
+  "decision_threshold": {
+    "score": "raw_patchcore_image_score",
+    "value": 35,
+    "rule": "fail_if_score_greater_than_or_equal",
+    "provenance": "provisional_split_v2_normal_validation_ceiling",
+    "calibration": {
+      "split": "val",
+      "normal_samples": 994,
+      "maximum_normal_score": 34.23482894897461,
+      "observed_false_positives": 0,
+      "defect_recall_validated": false
+    }
+  },
   "max_image_bytes": 26214400
 }

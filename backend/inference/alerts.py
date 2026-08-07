@@ -25,8 +25,8 @@ class AlertManager:
         )
 
     def evaluate_session(self, overall_status: str, session_id: str) -> None:
-        # SHADOW and REVIEW are intentionally excluded: the current models do
-        # not make production decisions, so they must not affect failure rules.
+        # WRONG_INPUT is intentionally ignored: it is not a defective can and
+        # must not affect failure streaks or pass-rate alerts.
         for rule in self.config.get("alerts", []):
             if not rule.get("enabled", True):
                 continue

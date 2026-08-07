@@ -9,7 +9,7 @@ services:
       - ./runtime-data:/app/runtime-data
     environment:
       JERRYSCAN_MODEL_FOLDER: /app/models/${JERRYSCAN_MODEL_NAME:-Patchcore_rembg_u2net_black_v1_256_c10_seed42}
-      JERRYSCAN_HISTORY_PATH: /app/runtime-data/inspections_history.json
+      JERRYSCAN_HISTORY_PATH: /app/runtime-data/inspections_history.db
       JERRYSCAN_CONFIG_PATH: /app/runtime-data/settings.json
       JERRYSCAN_CORS_ORIGINS: ${JERRYSCAN_CORS_ORIGINS:-http://localhost:5173}
       SMTP_SERVER: ${SMTP_SERVER:-smtp.gmail.com}

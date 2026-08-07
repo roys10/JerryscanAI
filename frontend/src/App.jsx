@@ -1,13 +1,65 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, RefreshCw, History, LayoutDashboard, Search, Filter, Settings, Bell, Plus, Trash2, Edit2, Mail, Globe } from 'lucide-react';
 import './Inspection.css';
 import './History.css';
 
 const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const QUALITY_FAILURE_BOUNDARY = 70;
+
+function apiErrorDetail(err, fallback) {
+  const detail = err.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (detail && typeof detail === 'object') return detail.error || JSON.stringify(detail);
+  return err.message || fallback;
+}
 
 function ResultImage({ src, ...props }) {
   return src ? <img src={src} {...props} /> : null;
+}
+
+function displayModelName(displayName, modelId) {
+  if (displayName) return displayName;
+  return modelId ? modelId.replace(/_/g, ' ') : 'Model not ready';
+}
+
+function qualityScore(result) {
+  if (Number.isFinite(result?.quality_score_percentage)) {
+    return result.quality_score_percentage;
+  }
+  if (!Number.isFinite(result?.raw_image_score)
+    || !Number.isFinite(result?.image_threshold)
+    || result.image_threshold <= 0) {
+    return null;
+  }
+  const quality = 100 - ((100 - QUALITY_FAILURE_BOUNDARY)
+    * result.raw_image_score / result.image_threshold);
+  return Math.min(100, Math.max(0, quality));
+}
+
+function resultViews(result) {
+  if (!result) return [];
+
+  return [
+    result.defect_overlay_image && {
+      id: 'defect',
+      label: 'Defect Location',
+      src: result.defect_overlay_image,
+      alt: 'Defect localization overlay',
+    },
+    result.heatmap_image && {
+      id: 'heatmap',
+      label: 'Anomaly Map',
+      src: result.heatmap_image,
+      alt: 'PatchCore anomaly map',
+    },
+    result.segmentation_image && {
+      id: 'segmentation',
+      label: 'Preprocessing Mask',
+      src: result.segmentation_image,
+      alt: 'Preprocessed model input',
+    },
+  ].filter(Boolean);
 }
 
 function App() {
@@ -34,15 +86,15 @@ function App() {
   const [angleData, setAngleData] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const inspectionInFlight = useRef(false);
 
   // History State
   const [history, setHistory] = useState([]);
-  const [stats, setStats] = useState({ total: 0, passes: 0, faults: 0, reviews: 0, shadow: 0, system_errors: 0, pass_rate: null });
+  const [stats, setStats] = useState({ total: 0, decision_count: 0, passes: 0, faults: 0, wrong_inputs: 0, pass_rate: null });
   const [filter, setFilter] = useState('all'); // 'all', 'PASS', 'FAIL'
 
-  // Multi-Model State
-  const [availableModels, setAvailableModels] = useState([]);
-  const [selectedModel, setSelectedModel] = useState('');
+  // The production service owns exactly one configured model.
+  const [modelConfiguration, setModelConfiguration] = useState(null);
 
   // Angle Selection State
   const [activeAngle, setActiveAngle] = useState('G01');
@@ -51,7 +103,7 @@ function App() {
   ];
 
   // View Mode State
-  const [viewMode, setViewMode] = useState('heatmap'); // 'heatmap' or 'segmentation'
+  const [viewMode, setViewMode] = useState('defect');
 
   // Global Result State
   const [globalResult, setGlobalResult] = useState(null);
@@ -59,9 +111,12 @@ function App() {
   // Get current angle's data or empty object
   const currentData = angleData[activeAngle] || {};
   const { previewUrl, result } = currentData;
+  const availableResultViews = resultViews(result);
+  const selectedResultView = availableResultViews.find(view => view.id === viewMode)
+    || availableResultViews[0];
 
   useEffect(() => {
-    fetchModels();
+    fetchModelConfiguration();
     fetchSettings();
     if (activePage === 'history') {
       fetchHistory();
@@ -92,15 +147,13 @@ function App() {
     }
   };
 
-  const fetchModels = async () => {
+  const fetchModelConfiguration = async () => {
     try {
-      const response = await axios.get(`${BACKEND_BASE_URL}/models`);
-      setAvailableModels(response.data);
-      if (response.data.length > 0 && !selectedModel) {
-        setSelectedModel(response.data[0]);
-      }
+      const response = await axios.get(`${BACKEND_BASE_URL}/health`);
+      setModelConfiguration(response.data);
     } catch (err) {
-      console.error("Failed to fetch models:", err);
+      console.error("Failed to fetch model configuration:", err);
+      setModelConfiguration(null);
     }
   };
 
@@ -128,7 +181,7 @@ function App() {
   const simulateTrigger = async () => {
     setLoading(true);
     try {
-      const response = await axios.post(`${BACKEND_BASE_URL}/simulate-trigger?model_name=${selectedModel}`);
+      const response = await axios.post(`${BACKEND_BASE_URL}/simulate-trigger`);
       if (activePage === 'history') {
         fetchHistory();
         fetchStats();
@@ -145,9 +198,10 @@ function App() {
         });
         setAngleData(simData);
         setGlobalResult(response.data.overall_status);
+        setViewMode('defect');
       }
     } catch (err) {
-      setError("Simulation failed: " + (err.response?.data?.detail || err.message));
+      setError("Simulation failed: " + apiErrorDetail(err, 'Request failed'));
     } finally {
       setLoading(false);
     }
@@ -179,29 +233,30 @@ function App() {
     // Clear global result when new data comes in
     setGlobalResult(null);
     setError(null);
-    setViewMode('heatmap');
+    setViewMode('defect');
   };
 
   const runBatchInspection = async () => {
+    if (inspectionInFlight.current) return;
+
     const anglesToInspect = angles.filter(a => angleData[a.id]?.selectedFile);
     if (anglesToInspect.length === 0) {
       setError("No images uploaded to inspect.");
       return;
     }
 
+    inspectionInFlight.current = true;
     setLoading(true);
     setError(null);
     setGlobalResult(null);
 
-    const formData = new FormData();
-    anglesToInspect.forEach(angle => {
-      formData.append(angle.id, angleData[angle.id].selectedFile);
-    });
-
     try {
-      const response = await axios.post(`${BACKEND_BASE_URL}/inspect-batch?model_name=${selectedModel}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      const formData = new FormData();
+      anglesToInspect.forEach(angle => {
+        formData.append(angle.id, angleData[angle.id].selectedFile);
       });
+      // Let the browser add the multipart boundary to Content-Type.
+      const response = await axios.post(`${BACKEND_BASE_URL}/inspect-batch`, formData);
 
       const { overall_status, angles: results } = response.data;
 
@@ -212,11 +267,13 @@ function App() {
 
       setAngleData(newAngleData);
       setGlobalResult(overall_status);
+      setViewMode('defect');
 
     } catch (err) {
       console.error(err);
-      setError('Inspection Failed: ' + (err.response?.data?.detail || 'System error'));
+      setError('Inspection failed: ' + apiErrorDetail(err, 'Request failed'));
     } finally {
+      inspectionInFlight.current = false;
       setLoading(false);
     }
   };
@@ -338,7 +395,10 @@ function App() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Brain size={14} />
-            <span><strong>Model Set:</strong> {selectedSession?.model_name || 'Standard'}</span>
+            <span><strong>Model Set:</strong> {displayModelName(
+              result?.model_display_name,
+              selectedSession?.model_name
+            )}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <AlertCircle size={14} />
@@ -352,20 +412,22 @@ function App() {
         <div className="control-panel">
           <div className="card">
             <h3>Model Configuration</h3>
-            <div style={{ marginTop: '0.5rem' }}>
-              <select
-                className="model-selector"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                disabled={isArchiveView || loading}
-              >
-                {availableModels.length === 0 && <option value="">Loading models...</option>}
-                {availableModels.map(name => (
-                  <option key={name} value={name}>{name.replace(/_/g, ' ')}</option>
-                ))}
-              </select>
-              <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                {isArchiveView ? 'Running inspection is disabled in archive view' : 'Select optimized model set for current batch.'}
+            <div className="model-configuration">
+              <div className="model-configuration-row">
+                <span>Model</span>
+                <strong>{isArchiveView
+                  ? displayModelName(
+                    result?.model_display_name,
+                    result?.model_id || selectedSession?.model_name
+                  )
+                  : displayModelName(
+                    modelConfiguration?.display_name,
+                    modelConfiguration?.model_id
+                  )}</strong>
+              </div>
+              <div className="model-configuration-row">
+                <span>Threshold</span>
+                <strong>{QUALITY_FAILURE_BOUNDARY}%</strong>
               </div>
             </div>
           </div>
@@ -381,8 +443,7 @@ function App() {
                 let statusColor = '#9ca3af';
                 if (status === 'PASS') statusColor = '#10b981';
                 if (status === 'FAIL') statusColor = '#ef4444';
-                if (status === 'UNAVAILABLE' || status === 'REVIEW') statusColor = '#f59e0b';
-                if (status === 'SHADOW') statusColor = '#3b82f6';
+                if (status === 'WRONG_INPUT') statusColor = '#f59e0b';
 
                 return (
                   <div
@@ -413,12 +474,17 @@ function App() {
                   className="btn-primary"
                   onClick={runBatchInspection}
                   disabled={loading || inspectedCount === 0}
+                  aria-busy={loading}
                 >
-                  {loading ? <Loader2 className="spin" size={20} /> : <Brain size={20} />}
+                  {loading ? (
+                    <Loader2 className="batch-loading-spinner" size={20} aria-hidden="true" />
+                  ) : (
+                    <Brain size={20} aria-hidden="true" />
+                  )}
                   {loading ? 'Inspecting Batch...' : `Run Inspection (${inspectedCount})`}
                 </button>
                 <div style={{ marginTop: '1rem' }}>
-                  <button className="btn-secondary" onClick={clearState}>
+                  <button className="btn-secondary" onClick={clearState} disabled={loading}>
                     <RefreshCw size={16} /> Reset Session
                   </button>
                 </div>
@@ -447,10 +513,19 @@ function App() {
         <div className="card" style={{ minHeight: '600px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <h3>{angles.find(a => a.id === activeAngle)?.label}</h3>
-            {result && result.status !== 'UNAVAILABLE' && (
-              <div style={{ display: 'flex', gap: '0.5rem', background: '#f3f4f6', padding: '0.25rem', borderRadius: '0.375rem' }}>
-                <button onClick={() => setViewMode('heatmap')} style={{ border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', background: viewMode === 'heatmap' ? 'white' : 'transparent', borderRadius: '0.25rem' }}>Anomaly Map</button>
-                {result.segmentation_image && <button onClick={() => setViewMode('segmentation')} style={{ border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', background: viewMode === 'segmentation' ? 'white' : 'transparent', borderRadius: '0.25rem' }}>Preprocessing Mask</button>}
+            {result && result.status !== 'WRONG_INPUT' && (
+              <div className="result-view-toggle" role="group" aria-label="Inspection visualization">
+                {availableResultViews.map(view => (
+                  <button
+                    key={view.id}
+                    type="button"
+                    className={selectedResultView?.id === view.id ? 'active' : ''}
+                    aria-pressed={selectedResultView?.id === view.id}
+                    onClick={() => setViewMode(view.id)}
+                  >
+                    {view.label}
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -464,25 +539,43 @@ function App() {
           ) : (
             <div className="preview-container">
               {result ? (
-                ['UNAVAILABLE', 'REVIEW', 'SYSTEM_ERROR'].includes(result.status) ? (
+                result.status === 'WRONG_INPUT' ? (
                   <div style={{ textAlign: 'center', color: 'white' }}>
                     <AlertCircle size={48} color="#f59e0b" />
-                    <h3 style={{ color: '#f59e0b', margin: '0.5rem 0' }}>Review Required</h3>
-                    <p style={{ margin: '0.5rem 0' }}>{result.error?.detail || 'No safe inspection decision is available.'}</p>
+                    <h3 style={{ color: '#f59e0b', margin: '0.5rem 0' }}>Wrong input</h3>
+                    <p style={{ margin: '0.5rem 0' }}>{result.error?.detail || 'Could not inspect this input image.'}</p>
                     {result.original_image && <ResultImage src={result.original_image} alt="Inspection evidence" style={{ maxWidth: '200px', opacity: 0.5 }} />}
                   </div>
                 ) : (
                   <>
-                    <div className={`status-badge ${result.status === 'PASS' ? 'status-pass' : result.status === 'FAIL' ? 'status-fail' : 'status-review'}`}>
+                    <div className={`status-badge ${result.status === 'PASS' ? 'status-pass' : result.status === 'FAIL' ? 'status-fail' : 'status-wrong-input'}`}>
                       {result.status}
-                      {Number.isFinite(result.raw_image_score) && ` · raw score ${result.raw_image_score.toFixed(4)}`}
                     </div>
-                    <ResultImage src={viewMode === 'heatmap' || !result.segmentation_image ? result.heatmap_image : result.segmentation_image} alt="Inspection visualization" className="preview-image" />
+                    <ResultImage
+                      src={selectedResultView?.src}
+                      alt={selectedResultView?.alt || 'Inspection visualization'}
+                      className="preview-image"
+                    />
                   </>
                 )
               ) : (
                 <ResultImage src={previewUrl} alt="Uploaded jerrycan" className="preview-image" />
               )}
+            </div>
+          )}
+          {result && result.status !== 'WRONG_INPUT' && qualityScore(result) !== null && (
+            <div className="result-summary" aria-label="Quality result details">
+              <div>
+                <span className="result-summary-label">Quality score</span>
+                <strong className={result.status === 'FAIL' ? 'quality-fail' : 'quality-pass'}>
+                  {qualityScore(result).toFixed(1)}%
+                </strong>
+              </div>
+              <div className="result-summary-explanation">
+                100% means no measured anomaly. Failure threshold: {QUALITY_FAILURE_BOUNDARY}%.
+                This relative quality index is not confidence, probability, or accuracy.
+                <span>Raw model score: {result.raw_image_score.toFixed(4)}</span>
+              </div>
             </div>
           )}
         </div>
@@ -510,12 +603,8 @@ function App() {
           <div className="stat-value" style={{ color: '#ef4444' }}>{stats.faults}</div>
         </div>
         <div className="stat-card">
-          <h4>Needs Review</h4>
-          <div className="stat-value" style={{ color: '#f59e0b' }}>{stats.reviews}</div>
-        </div>
-        <div className="stat-card">
-          <h4>Shadow / System</h4>
-          <div className="stat-value" style={{ color: '#3b82f6' }}>{(stats.shadow || 0) + (stats.system_errors || 0)}</div>
+          <h4>Wrong Inputs</h4>
+          <div className="stat-value" style={{ color: '#f59e0b' }}>{stats.wrong_inputs}</div>
         </div>
       </div>
 
@@ -530,9 +619,7 @@ function App() {
             <option value="all">All Results</option>
             <option value="PASS">Pass Only</option>
             <option value="FAIL">Fail Only</option>
-            <option value="REVIEW">Review Only</option>
-            <option value="SHADOW">Shadow Only</option>
-            <option value="SYSTEM_ERROR">System Errors</option>
+            <option value="WRONG_INPUT">Wrong Input Only</option>
           </select>
         </div>
         <div style={{ color: 'var(--text-muted)' }}>Showing last {history.length} records</div>
@@ -563,6 +650,7 @@ function App() {
                 setAngleData(mappedData);
                 setGlobalResult(session.overall_status);
                 setSelectedSession(session);
+                setViewMode('defect');
 
                 // Find first angle with data to focus on
                 const firstAngle = Object.keys(session.angles)[0];
@@ -573,9 +661,11 @@ function App() {
               }}>
                 <td>{new Date(session.timestamp).toLocaleString()}</td>
                 <td><code style={{ fontSize: '0.75rem' }}>{session.id.split('-')[0]}...</code></td>
-                <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{session.model_name || 'Standard'}</td>
+                <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  {displayModelName(null, session.model_name)}
+                </td>
                 <td>
-                  <span className={`status-row-badge ${session.overall_status === 'PASS' ? 'badge-pass' : session.overall_status === 'FAIL' ? 'badge-fail' : 'badge-review'}`}>
+                  <span className={`status-row-badge ${session.overall_status === 'PASS' ? 'badge-pass' : session.overall_status === 'FAIL' ? 'badge-fail' : 'badge-wrong-input'}`}>
                     {session.overall_status}
                   </span>
                 </td>

@@ -109,10 +109,11 @@ G01 dimensions, and any preprocessing weight by identity and hash. See
 continue to use the lab registry and workspace so experiments cannot silently
 change the line runtime.
 
-The current model folders have no validated defect threshold. They therefore
-run in `SHADOW / UNDECIDED`; Model Lab results must not be treated as
-production PASS/FAIL qualification until labeled real faults are used for
-validation and the locked test is evaluated after all decisions are frozen.
+The manufacturing folders currently use the owner's provisional raw-score
+threshold 60 (`score >= 60` means `FAIL`). Model Lab calibration remains
+independent, and its results must not be treated as production PASS/FAIL
+qualification until labeled real faults are used for validation and the locked
+test is evaluated after all decisions are frozen.
 
 The previous Streamlit files remain temporarily as a legacy exploratory UI and
 must not be used for benchmark claims.

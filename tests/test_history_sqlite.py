@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import asyncio
+import io
+import sqlite3
+import tempfile
+import threading
+import unittest
+from contextlib import closing
+from pathlib import Path
+
+from fastapi import HTTPException, UploadFile
+
+import backend.main as backend_main
+from backend.inference.history import HistoryManager
+from backend.inference.local_model import InferenceRuntimeError
+from backend.inference.manager import ModelNotReadyError
+
+
+def _result(status: str, score: float | None = None) -> dict:
+    return {
+        "status": status,
+        "decision": status if status in {"PASS", "FAIL"} else None,
+        "raw_image_score": score,
+    }
+
+
+class SQLiteHistoryTests(unittest.TestCase):
+    def test_crud_filter_persistence_and_sql_stats(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "history.db"
+            manager = HistoryManager(path)
+            pass_id = manager.save_session({"G01": _result("PASS", 12)}, "PASS", "m1")
+            manager.save_session({"G01": _result("FAIL", 60)}, "FAIL", "m1")
+            wrong_id = manager.save_session(
+                {"G01": _result("WRONG_INPUT")}, "WRONG_INPUT", "m1"
+            )
+
+            self.assertEqual(manager.get_session(pass_id)["angles"]["G01"]["status"], "PASS")
+            self.assertEqual(manager.get_session(wrong_id)["overall_status"], "WRONG_INPUT")
+            self.assertEqual(len(manager.get_history(status="FAIL")), 1)
+            stats = manager.get_stats()
+            self.assertEqual(
+                stats,
+                {
+                    "total": 3,
+                    "decision_count": 2,
+                    "passes": 1,
+                    "faults": 1,
+                    "wrong_inputs": 1,
+                    "pass_rate": 50.0,
+                },
+            )
+            self.assertEqual(HistoryManager(path).get_stats()["total"], 3)
+            with closing(sqlite3.connect(path)) as conn:
+                self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
+    def test_concurrent_writes_do_not_lose_sessions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = HistoryManager(Path(temporary) / "history.db")
+            errors = []
+
+            def writer(index: int) -> None:
+                try:
+                    manager.save_session(
+                        {"G01": _result("PASS", float(index))}, "PASS", "m1"
+                    )
+                except Exception as exc:  # pragma: no cover - asserted below
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=writer, args=(index,)) for index in range(24)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(errors, [])
+            self.assertEqual(manager.get_stats()["total"], 24)
+
+    def test_unknown_status_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = HistoryManager(Path(temporary) / "history.db")
+            with self.assertRaisesRegex(ValueError, "Unknown inspection status"):
+                manager.save_session({"G01": {}}, "SYSTEM_ERROR")
+
+
+class _UnavailableManager:
+    runtime = None
+
+    def inspect(self, *_args, **_kwargs):
+        raise ModelNotReadyError("No model found: configure JERRYSCAN_MODEL_FOLDER")
+
+
+class _FailingManager:
+    runtime = None
+
+    def inspect(self, *_args, **_kwargs):
+        raise InferenceRuntimeError("PatchCore inference failed")
+
+
+class BackendHTTPTests(unittest.TestCase):
+    def _assert_http_error(self, manager, expected_status: int) -> None:
+        old_manager = backend_main.model_manager
+        old_history = backend_main.history_manager
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                backend_main.model_manager = manager
+                backend_main.history_manager = HistoryManager(Path(temporary) / "history.db")
+                upload = UploadFile(filename="G01.png", file=io.BytesIO(b"image"))
+                with self.assertRaises(HTTPException) as caught:
+                    asyncio.run(backend_main.inspect_image(upload))
+                self.assertEqual(caught.exception.status_code, expected_status)
+                self.assertEqual(backend_main.history_manager.get_stats()["total"], 0)
+        finally:
+            backend_main.model_manager = old_manager
+            backend_main.history_manager = old_history
+
+    def test_missing_model_is_http_503_and_not_persisted(self):
+        self._assert_http_error(_UnavailableManager(), 503)
+
+    def test_runtime_failure_is_http_500_and_not_persisted(self):
+        self._assert_http_error(_FailingManager(), 500)
+
+
+if __name__ == "__main__":
+    unittest.main()

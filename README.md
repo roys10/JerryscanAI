@@ -31,7 +31,8 @@ Frontend dependencies are installed separately in their respective application d
 The current manufacturing runtime is intentionally simple and G01-only. You
 choose one model by pointing the backend at its folder. For every original
 camera image, the backend runs that folder's preprocessing and PatchCore
-checkpoint, then returns the raw anomaly score and a display heatmap.
+checkpoint, then returns the raw anomaly score, a fixed-scale heatmap, a red
+defect-location contour, and the preprocessing mask as separate UI views.
 The original G01 contract is exactly 1025 x 1281 pixels; resized or already
 preprocessed images are rejected before preprocessing.
 
@@ -44,6 +45,10 @@ models/Patchcore_<preprocessing>_256_c10_seed42/
 |-- G01.metadata.json      # tracked training/reproducibility record
 |-- G01.ckpt               # supplied locally; ignored by Git
 ```
+
+The stable `model.id` remains tied to the folder and training metadata, while
+the optional `model.display_name` in `model.json` controls the name shown to
+operators. Changing the display name does not require renaming the folder.
 
 Each current folder already includes its matching metadata; normally you add
 only that run's `G01.ckpt`. The rembg folders also need `u2net.onnx`. They first look beside `model.json`,
@@ -59,8 +64,12 @@ uv run uvicorn backend.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/health`. A complete folder reports
-`shadow_ready`; a missing or mismatched artifact reports the exact problem and
-inspection requests return `REVIEW`, never `PASS`.
+`ready`; a missing or mismatched model artifact is reported by `/health` and
+inspection requests return HTTP 503 rather than an inspection result.
+PatchCore inference prefers CUDA automatically. If CUDA is unavailable or the
+checkpoint cannot load and warm up on the GPU, startup retries on CPU. The
+selected `inference_device` and any `device_fallback_reason` are reported by
+`/health`.
 On startup, the backend verifies the checkpoint and any U2Net weight against
 the SHA-256 and byte size recorded in `model.json` before either model is loaded.
 
@@ -72,15 +81,27 @@ npm install
 npm run dev
 ```
 
-The four current checkpoints are not calibrated on labeled defects. Their
-`exploratory_threshold` is therefore `null`, so successful inference reports
-`SHADOW / UNDECIDED`. A future threshold may be written into `model.json` only
-after validation; even then this local runtime labels it exploratory rather
-than claiming a qualified production decision.
+Each model's `model.json` contains its own provisional raw-score threshold:
+raw letterbox 35, fixed crop 36, and both U2Net variants 34. Each value is the
+rounded ceiling above that model's maximum score on the 994 normal `split_v2`
+validation images, producing zero observed validation false positives. These
+are not percentages, and real labeled faults are still required to validate
+defect recall. Invalid images or failed input preprocessing return
+`WRONG_INPUT`; model/runtime failures are HTTP errors and are not recorded as
+defective cans.
+
+The operator UI converts the raw anomaly score to a relative quality index:
+100% means no measured anomaly and 70% is the configured failure boundary.
+Values at or below 70% are `FAIL`. This index is a monotonic presentation of
+the same raw-score rule, not confidence, probability, accuracy, or a second
+decision threshold.
 
 For Docker, set `JERRYSCAN_MODEL_NAME` to a folder name and run
 `docker compose up --build`. Compose mounts `models/` read-only and keeps
-settings/history under ignored `runtime-data/`.
+runtime files under `runtime-data/`. Inspection history is stored in the active
+`runtime-data/inspections_history.db` SQLite database. This project keeps that
+same database file in Git as requested; `settings.json` and SQLite's temporary
+WAL/SHM files remain ignored.
 
 For a normal local run, non-secret alert settings live in
 `backend/config.json`. You may edit the SMTP server/user, recipients, webhook,

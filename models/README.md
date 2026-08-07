@@ -20,7 +20,11 @@ Commit `model.json`, `README.md`, `.gitignore`, and the small reviewed
 `G01.metadata.json`. The model contract contains
 the PatchCore identity, angle, checkpoint names, complete live preprocessing
 configuration, expected original image size, artifact SHA-256/byte sizes, and
-optional exploratory threshold.
+the raw PatchCore image-score decision threshold.
+
+The folder name and `model.id` are the stable technical identity used to bind
+the folder to its training metadata. Change `model.display_name` independently
+to control the human-readable name shown in the manufacturing UI.
 
 Keep `G01.ckpt` and learned preprocessing weights local. They are large
 supplied artifacts and are ignored in each current folder. The loader requires
@@ -53,14 +57,15 @@ uv run uvicorn backend.main:app --reload
 Upload the original G01 camera image. Do not manually preprocess it; the
 selected folder's pipeline runs automatically. The fixed-crop contract also
 expects the original 1025 x 1281 camera dimensions. Any other size, including a
-1024 x 1024 derivative, correctly returns `REVIEW` before preprocessing.
+1024 x 1024 derivative, correctly returns `WRONG_INPUT` before preprocessing.
 
 The backend checks each local checkpoint and rembg weight against the expected
 SHA-256 and byte size in `model.json` before Torch or ONNX loads it. A partial,
 wrong, or corrupted copy leaves the model not ready instead of running it.
 
-All four `exploratory_threshold` values are currently `null`. The API reports a
-raw PatchCore score and heatmap, but keeps the status `SHADOW` and decision
-`UNDECIDED`. Do not invent a threshold from the normal-only dataset. Choose it
-on validation data containing labeled real faults, then evaluate the locked
-test set once.
+Each contract has a provisional threshold on `raw_patchcore_image_score`: raw
+letterbox 35, fixed crop 36, and both U2Net variants 34. The values are rounded
+ceilings above each model's maximum score on 994 normal `split_v2` validation
+images, producing zero observed validation false positives. They are not
+percentages. A defensible final threshold still requires labeled fault
+validation followed by one locked-test evaluation.

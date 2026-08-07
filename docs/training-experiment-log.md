@@ -320,6 +320,14 @@ by median. A production ranking must later compare defect recall at the same
 fixed normal false-positive rate, with AUROC/AUPR reported when reviewed normal
 and defect samples are both available.
 
+The manufacturing contracts now use provisional per-model thresholds on the
+unnormalized `raw_patchcore_image_score` scale: raw letterbox 35, fixed crop
+36, U2-Net black 34, and U2-Net gray 34. Each is the rounded ceiling above the
+model's maximum score on the 994 normal validation images, giving zero observed
+false positives on that validation split. This only establishes a provisional
+normal false-positive operating point; it must not be presented as validated
+defect recall.
+
 ### CPU timing
 
 All values are milliseconds per image; each cell is median / p95. These are

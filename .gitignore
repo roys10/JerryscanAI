@@ -41,7 +41,8 @@ model_lab/frontend/node_modules/
 model_lab/frontend/dist/
 model_lab/frontend/.env*
 .model_lab/
-/runtime-data/
+/runtime-data/*
+!/runtime-data/inspections_history.db
 /backend/inspections_history.json
 frontend/.env
 frontend/.env.local

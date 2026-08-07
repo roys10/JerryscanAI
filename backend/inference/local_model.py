@@ -12,7 +12,9 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -28,14 +30,15 @@ from training.preprocessing.runtime import create_backend, process_single_image
 
 MANIFEST_FILENAME = "model.json"
 SUPPORTED_BACKENDS = {"raw_letterbox", "fixed_crop", "rembg"}
+LOGGER = logging.getLogger(__name__)
 
 
 class ModelFolderError(RuntimeError):
     """The selected local model folder is incomplete or inconsistent."""
 
 
-class InspectionReviewError(RuntimeError):
-    """An image cannot safely receive a model result."""
+class InspectionInputError(RuntimeError):
+    """The submitted image cannot safely be inspected."""
 
     def __init__(
         self,
@@ -50,6 +53,10 @@ class InspectionReviewError(RuntimeError):
         self.code = code
         self.detail = detail
         self.quality_flags = list(quality_flags or [])
+
+
+class InferenceRuntimeError(RuntimeError):
+    """The model was loaded but failed while performing inference."""
 
 
 def _json_object(path: Path, label: str) -> dict[str, Any]:
@@ -133,6 +140,7 @@ class LocalModelManifest:
 
     folder: Path
     model_id: str
+    display_name: str
     family: str
     angle: str
     image_size: int
@@ -147,7 +155,7 @@ class LocalModelManifest:
     preprocessing_weight: Path | None
     preprocessing_weight_sha256: str | None
     preprocessing_weight_size_bytes: int | None
-    exploratory_threshold: float | None
+    decision_threshold: float
     max_image_bytes: int
 
     @classmethod
@@ -174,6 +182,10 @@ class LocalModelManifest:
             raise ModelFolderError("model.json requires an object field 'preprocessing'")
 
         model_id = str(model.get("id", ""))
+        display_name_value = model.get("display_name", model_id)
+        if not isinstance(display_name_value, str) or not display_name_value.strip():
+            raise ModelFolderError("model.display_name must be a non-empty string")
+        display_name = display_name_value.strip()
         family = str(model.get("family", "")).casefold()
         angle = str(model.get("angle", ""))
         image_size = model.get("image_size")
@@ -221,18 +233,28 @@ class LocalModelManifest:
             config["model_dir"] = str(weight.parent)
             config["model_filename"] = weight.name
 
-        threshold_value = document.get("exploratory_threshold")
-        threshold: float | None
-        if threshold_value is None:
-            threshold = None
-        elif (
+        threshold_contract = document.get("decision_threshold")
+        if not isinstance(threshold_contract, dict):
+            raise ModelFolderError("decision_threshold must be an object")
+        if threshold_contract.get("score") != "raw_patchcore_image_score":
+            raise ModelFolderError(
+                "decision_threshold.score must be 'raw_patchcore_image_score'"
+            )
+        if threshold_contract.get("rule") != "fail_if_score_greater_than_or_equal":
+            raise ModelFolderError(
+                "decision_threshold.rule must be 'fail_if_score_greater_than_or_equal'"
+            )
+        threshold_value = threshold_contract.get("value")
+        if (
             not isinstance(threshold_value, (int, float))
             or isinstance(threshold_value, bool)
             or not math.isfinite(float(threshold_value))
+            or float(threshold_value) <= 0
         ):
-            raise ModelFolderError("exploratory_threshold must be null or a finite number")
-        else:
-            threshold = float(threshold_value)
+            raise ModelFolderError(
+                "decision_threshold.value must be a positive finite number"
+            )
+        threshold = float(threshold_value)
 
         max_bytes = document.get("max_image_bytes", 25 * 1024 * 1024)
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
@@ -241,6 +263,7 @@ class LocalModelManifest:
         manifest = cls(
             folder=selected,
             model_id=model_id,
+            display_name=display_name,
             family=family,
             angle=angle,
             image_size=image_size,
@@ -255,7 +278,7 @@ class LocalModelManifest:
             preprocessing_weight=weight,
             preprocessing_weight_sha256=weight_sha256,
             preprocessing_weight_size_bytes=weight_size,
-            exploratory_threshold=threshold,
+            decision_threshold=threshold,
             max_image_bytes=max_bytes,
         )
         if require_artifacts:
@@ -371,15 +394,98 @@ class RawPatchCoreEngine:
             anomalib.PrecisionType = str
         self.torch = torch
         self.v2 = v2
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = Patchcore.load_from_checkpoint(
-            checkpoint, map_location=self.device, weights_only=False
-        ).to(self.device).eval()
+        self.model = None
+        self.device_fallback_reason: str | None = None
+        self._load_on_preferred_device(checkpoint, Patchcore)
+
+    def _initialize_on_device(self, checkpoint: Path, patchcore_class: Any, device: Any) -> None:
+        """Load and warm up the checkpoint on one concrete Torch device."""
+        self.device = device
+        self.model = None
+        if device.type == "cpu":
+            available_threads = max(1, os.cpu_count() or 1)
+            target_threads = min(12, available_threads)
+            if self.torch.get_num_threads() < target_threads:
+                self.torch.set_num_threads(target_threads)
+        self.model = patchcore_class.load_from_checkpoint(
+            checkpoint, map_location=device, weights_only=False
+        ).to(device).eval()
         if not self.model.pre_processor or not self.model.pre_processor.transform:
             raise RuntimeError("PatchCore checkpoint lacks its training preprocessor")
-        self.transform = v2.Compose(
-            [v2.ToDtype(torch.float32, scale=True), self.model.pre_processor.transform]
+        self.pixel_display_bounds = self._pixel_display_bounds()
+        self.transform = self.v2.Compose(
+            [
+                self.v2.ToDtype(self.torch.float32, scale=True),
+                self.model.pre_processor.transform,
+            ]
         )
+        self.warmup_ms = self._warm_up()
+
+    def _load_on_preferred_device(self, checkpoint: Path, patchcore_class: Any) -> None:
+        """Prefer CUDA, falling back to CPU if CUDA initialization is unusable."""
+        cpu = self.torch.device("cpu")
+        if not self.torch.cuda.is_available():
+            self._initialize_on_device(checkpoint, patchcore_class, cpu)
+            return
+
+        cuda = self.torch.device("cuda")
+        try:
+            self._initialize_on_device(checkpoint, patchcore_class, cuda)
+            return
+        except Exception as cuda_error:
+            self.model = None
+            self.torch.cuda.empty_cache()
+            self.device_fallback_reason = (
+                f"{type(cuda_error).__name__}: {cuda_error}"
+            )
+            LOGGER.warning(
+                "CUDA PatchCore initialization failed; falling back to CPU: %s",
+                self.device_fallback_reason,
+            )
+
+        try:
+            self._initialize_on_device(checkpoint, patchcore_class, cpu)
+        except Exception as cpu_error:
+            raise RuntimeError(
+                "CUDA PatchCore initialization failed "
+                f"({self.device_fallback_reason}); CPU fallback also failed "
+                f"({type(cpu_error).__name__}: {cpu_error})"
+            ) from cpu_error
+
+    def _warm_up(self) -> float:
+        """Pay one-time Torch/kernel initialization cost during API startup."""
+        probe = self.v2.functional.to_image(Image.new("RGB", (256, 256), "black"))
+        tensor = self.transform(probe).unsqueeze(0).to(self.device)
+        started = time.perf_counter()
+        with self.torch.inference_mode():
+            self.model.model(tensor)
+        if self.device.type == "cuda":
+            self.torch.cuda.synchronize()
+        return (time.perf_counter() - started) * 1000
+
+    def _pixel_display_bounds(self) -> tuple[float, float] | None:
+        """Read the training-wide pixel scale saved by Anomalib."""
+        owners = (getattr(self.model, "post_processor", None), self.model)
+        for owner in owners:
+            if owner is None or not (
+                hasattr(owner, "pixel_min") and hasattr(owner, "pixel_max")
+            ):
+                continue
+            low = getattr(owner, "pixel_min")
+            high = getattr(owner, "pixel_max")
+            if hasattr(low, "value"):
+                low = low.value
+            if hasattr(high, "value"):
+                high = high.value
+            if isinstance(low, self.torch.Tensor):
+                low = low.detach().reshape(-1)[0].cpu().item()
+            if isinstance(high, self.torch.Tensor):
+                high = high.detach().reshape(-1)[0].cpu().item()
+            low = float(low)
+            high = float(high)
+            if math.isfinite(low) and math.isfinite(high) and high > low:
+                return low, high
+        return None
 
     @staticmethod
     def _value(data: Any, name: str) -> Any:
@@ -429,23 +535,137 @@ def _encode_image(image: Image.Image, *, format: str = "JPEG") -> str:
     return f"data:{mime};base64,{payload}"
 
 
-def _display_overlay(anomaly_map: np.ndarray, model_input: Image.Image) -> str:
-    low = float(anomaly_map.min())
-    high = float(anomaly_map.max())
-    if high - low <= 1e-12:
-        normalized = np.zeros_like(anomaly_map, dtype=np.float32)
+_MAIN_COMPATIBILITY_THRESHOLD = 0.5
+QUALITY_FAILURE_BOUNDARY_PERCENTAGE = 70.0
+
+
+def _normalize_anomaly_map(
+    anomaly_map: np.ndarray,
+    display_bounds: tuple[float, float] | None,
+) -> tuple[np.ndarray, str]:
+    """Normalize a pixel map for display without changing the raw model output."""
+    if display_bounds is not None:
+        low, high = display_bounds
+        normalized = np.clip((anomaly_map - low) / (high - low), 0, 1)
+        contract = "checkpoint_pixel_minmax_display_only_never_used_for_decision"
     else:
-        normalized = (anomaly_map - low) / (high - low)
+        low = float(anomaly_map.min())
+        high = float(anomaly_map.max())
+        if high - low <= 1e-12:
+            normalized = np.zeros_like(anomaly_map, dtype=np.float32)
+        else:
+            normalized = (anomaly_map - low) / (high - low)
+        contract = "per_map_minmax_fallback_display_only_never_used_for_decision"
+    normalized = cv2.GaussianBlur(
+        normalized.astype(np.float32), (0, 0), sigmaX=4, sigmaY=4
+    )
+    return normalized, contract
+
+
+def _defect_localization_mask(normalized: np.ndarray) -> tuple[np.ndarray, float | None]:
+    """Return a focused, display-only mask for the strongest anomalous pixels.
+
+    The checkpoint's 0.5 pixel cutoff first defines the candidate anomaly
+    region. Two nested Otsu separations then isolate the high-anomaly core: the
+    first removes the broad outer halo and the second separates the remaining
+    core from its softer edge. Both cutoffs are derived from the current map's
+    score distribution rather than from a defect-example-specific constant.
+
+    This mask is used only to draw the operator overlay. It never changes the
+    raw image score, the configured decision threshold, or PASS/FAIL.
+    """
+    initial_candidate = normalized > _MAIN_COMPATIBILITY_THRESHOLD
+    if not np.any(initial_candidate):
+        return np.zeros_like(initial_candidate, dtype=np.uint8), None
+
+    focused_threshold = _MAIN_COMPATIBILITY_THRESHOLD
+    for _ in range(2):
+        candidate = normalized > focused_threshold
+        candidate_values = np.clip(normalized[candidate] * 255, 0, 255).astype(np.uint8)
+        if candidate_values.size < 2 or np.unique(candidate_values).size < 2:
+            break
+        otsu_threshold, _ = cv2.threshold(
+            candidate_values.reshape(-1, 1),
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+        )
+        # Move to the next 8-bit bin because OpenCV assigns values equal to
+        # its Otsu threshold to the lower population.
+        refined_threshold = max(
+            focused_threshold,
+            min(1.0, (float(otsu_threshold) + 1.0) / 255.0),
+        )
+        if refined_threshold <= focused_threshold:
+            break
+        focused_threshold = refined_threshold
+
+    focused = (normalized > focused_threshold).astype(np.uint8)
+    # Quantization can make Otsu's threshold equal the map maximum. Always
+    # preserve the actual peak so the display locator cannot erase its target.
+    peak = np.unravel_index(int(np.argmax(normalized)), normalized.shape)
+    focused[peak] = 1
+    return focused, focused_threshold
+
+
+def _display_artifacts(
+    anomaly_map: np.ndarray,
+    model_input: Image.Image,
+    display_bounds: tuple[float, float] | None,
+    *,
+    show_defect_contours: bool,
+) -> tuple[str, str, str]:
+    """Reproduce main's heatmap and contour view as separate UI artifacts."""
+    normalized, contract = _normalize_anomaly_map(anomaly_map, display_bounds)
     rgb = np.asarray(model_input.convert("RGB"))
-    normalized = cv2.resize(
+    normalized_up = cv2.resize(
         normalized, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_LINEAR
     )
     heatmap_bgr = cv2.applyColorMap(
-        (normalized * 255).astype(np.uint8), cv2.COLORMAP_JET
+        (normalized_up * 255).astype(np.uint8), cv2.COLORMAP_JET
     )
     heatmap_rgb = cv2.cvtColor(heatmap_bgr, cv2.COLOR_BGR2RGB)
     overlay = cv2.addWeighted(rgb, 0.6, heatmap_rgb, 0.4, 0)
-    return _encode_image(Image.fromarray(overlay))
+
+    # origin/main called this a segmentation overlay.  Keep the actual
+    # preprocessing mask in ``segmentation_image`` and expose defect contours
+    # independently so the UI can show both without changing their meaning.
+    # PASS results suppress contours so the operator view cannot contradict
+    # the configured image-level decision.
+    anomaly_mask, localization_threshold = _defect_localization_mask(normalized)
+    if not show_defect_contours:
+        anomaly_mask.fill(0)
+    anomaly_mask_up = cv2.resize(
+        anomaly_mask, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST
+    )
+    contours, _ = cv2.findContours(
+        anomaly_mask_up * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    defect_overlay = rgb.copy()
+    cv2.drawContours(defect_overlay, contours, -1, (255, 0, 0), 3)
+    return (
+        _encode_image(Image.fromarray(overlay)),
+        _encode_image(Image.fromarray(defect_overlay)),
+        (
+            contract
+            + "; defect_localization=display_only_nested_otsu_above_checkpoint_pixel_cutoff"
+            + (
+                f"@{localization_threshold:.4f}"
+                if localization_threshold is not None
+                else "@none"
+            )
+        ),
+    )
+
+
+def _quality_score_percentage(raw_score: float, raw_threshold: float) -> float:
+    """Map the raw anomaly scale to the operator's monotonic quality index."""
+    quality = 100 - (
+        (100 - QUALITY_FAILURE_BOUNDARY_PERCENTAGE)
+        * raw_score
+        / raw_threshold
+    )
+    return float(np.clip(quality, 0, 100))
 
 
 class LocalPatchCoreRuntime:
@@ -460,25 +680,29 @@ class LocalPatchCoreRuntime:
     ) -> None:
         self.manifest = manifest
         self.model_id = manifest.model_id
+        self.model_display_name = manifest.display_name
         self.angle = manifest.angle
         self.preprocessing_id = manifest.preprocessing_id
-        self.mode = "shadow"
         try:
             self.preprocessor = preprocessor_factory(manifest.preprocessing_config)
             self.engine = engine_factory(manifest.checkpoint)
         except Exception as exc:
             raise ModelFolderError(f"Could not load selected model folder: {exc}") from exc
+        self.inference_device = str(getattr(self.engine, "device", "unknown"))
+        self.device_fallback_reason = getattr(
+            self.engine, "device_fallback_reason", None
+        )
         self._gate = threading.BoundedSemaphore(1)
 
     def _decode(self, image_bytes: bytes, angle: str) -> Image.Image:
         if angle != self.angle:
-            raise InspectionReviewError(
+            raise InspectionInputError(
                 "input", "camera_angle_mismatch", f"Selected model accepts {self.angle}, not {angle}"
             )
         if not image_bytes:
-            raise InspectionReviewError("input", "empty_image", "Camera image is empty")
+            raise InspectionInputError("input", "empty_image", "Camera image is empty")
         if len(image_bytes) > self.manifest.max_image_bytes:
-            raise InspectionReviewError("input", "image_too_large", "Camera image is too large")
+            raise InspectionInputError("input", "image_too_large", "Camera image is too large")
         try:
             with Image.open(io.BytesIO(image_bytes)) as opened:
                 opened.load()
@@ -487,7 +711,7 @@ class LocalPatchCoreRuntime:
                     self.manifest.original_height,
                 )
                 if opened.size != expected_size:
-                    raise InspectionReviewError(
+                    raise InspectionInputError(
                         "input",
                         "image_size_mismatch",
                         (
@@ -497,7 +721,7 @@ class LocalPatchCoreRuntime:
                     )
                 return opened.convert("RGB").copy()
         except (UnidentifiedImageError, OSError, ValueError) as exc:
-            raise InspectionReviewError(
+            raise InspectionInputError(
                 "input", "image_decode_failed", "Could not decode camera image"
             ) from exc
 
@@ -512,12 +736,12 @@ class LocalPatchCoreRuntime:
                     backend_instance=self.preprocessor,
                 )
             except Exception as exc:
-                raise InspectionReviewError(
+                raise InspectionInputError(
                     "preprocessing", "preprocessing_failed", str(exc)
                 ) from exc
             quality_flags = list(metrics.get("quality_flags", []))
             if metrics.get("status") != "ok":
-                raise InspectionReviewError(
+                raise InspectionInputError(
                     "preprocessing",
                     "preprocessing_qa_failed",
                     "Preprocessing quality checks failed",
@@ -526,31 +750,36 @@ class LocalPatchCoreRuntime:
             try:
                 raw_score, anomaly_map, inference_ms = self.engine.predict(model_input)
             except Exception as exc:
-                raise InspectionReviewError(
-                    "inference", "patchcore_inference_failed", str(exc)
+                raise InferenceRuntimeError(
+                    f"PatchCore inference failed: {type(exc).__name__}: {exc}"
                 ) from exc
 
-        threshold = self.manifest.exploratory_threshold
-        exploratory_decision = None
-        if threshold is not None:
-            exploratory_decision = (
-                "EXPLORATORY_FAULT" if raw_score > threshold else "EXPLORATORY_NORMAL"
-            )
+        display_bounds = getattr(self.engine, "pixel_display_bounds", None)
+        threshold = self.manifest.decision_threshold
+        decision = "FAIL" if raw_score >= threshold else "PASS"
+        quality_score_percentage = _quality_score_percentage(raw_score, threshold)
+        heatmap_image, defect_overlay_image, display_contract = _display_artifacts(
+            anomaly_map,
+            model_input,
+            display_bounds,
+            show_defect_contours=decision == "FAIL",
+        )
         return {
-            "status": "SHADOW",
-            "system_status": "SHADOW",
-            "decision": "UNDECIDED",
-            "exploratory_decision": exploratory_decision,
+            "status": decision,
+            "decision": decision,
             "model_id": self.model_id,
+            "model_display_name": self.model_display_name,
             "preprocessing_id": self.preprocessing_id,
             "angle": self.angle,
-            "mode": self.mode,
             "raw_image_score": raw_score,
             "score": raw_score,
+            "quality_score_percentage": quality_score_percentage,
             "image_threshold": threshold,
-            "threshold_rule": (
-                "exploratory_fault_if_score_gt_threshold" if threshold is not None else None
-            ),
+            "quality_failure_boundary_percentage": QUALITY_FAILURE_BOUNDARY_PERCENTAGE,
+            "threshold_score": "raw_patchcore_image_score",
+            "threshold_rule": "fail_if_score_greater_than_or_equal",
+            "decision_contract": "configured_raw_patchcore_image_score",
+            "quality_score_contract": "relative_quality_zero_raw_is_100_threshold_is_70",
             "anomaly_map_shape": list(anomaly_map.shape),
             "quality_flags": quality_flags,
             "preprocessing": metrics,
@@ -558,32 +787,33 @@ class LocalPatchCoreRuntime:
                 "inference_ms": round(float(inference_ms), 3),
                 "total_ms": round((time.perf_counter() - total_started) * 1000, 3),
             },
-            "display_contract": "per_map_minmax_display_only_never_used_for_decision",
-            "heatmap_image": _display_overlay(anomaly_map, model_input),
+            "display_contract": display_contract,
+            "heatmap_image": heatmap_image,
+            "defect_overlay_image": defect_overlay_image,
             "segmentation_image": _encode_image(mask, format="PNG") if mask is not None else None,
             "original_image": _encode_image(image),
             "model_input_image": _encode_image(model_input),
         }
 
-    def review_result(
-        self, error: InspectionReviewError, *, system_error: bool = False
-    ) -> dict[str, Any]:
-        status = "SYSTEM_ERROR" if system_error else "REVIEW"
+    def wrong_input_result(self, error: InspectionInputError) -> dict[str, Any]:
         return {
-            "status": status,
-            "system_status": status,
-            "decision": "UNDECIDED",
-            "exploratory_decision": None,
+            "status": "WRONG_INPUT",
+            "decision": None,
             "model_id": self.model_id,
+            "model_display_name": self.model_display_name,
             "preprocessing_id": self.preprocessing_id,
             "angle": self.angle,
-            "mode": self.mode,
             "raw_image_score": None,
             "score": None,
-            "image_threshold": self.manifest.exploratory_threshold,
+            "quality_score_percentage": None,
+            "image_threshold": self.manifest.decision_threshold,
+            "quality_failure_boundary_percentage": QUALITY_FAILURE_BOUNDARY_PERCENTAGE,
+            "threshold_score": "raw_patchcore_image_score",
+            "threshold_rule": "fail_if_score_greater_than_or_equal",
             "quality_flags": error.quality_flags,
             "error": {"stage": error.stage, "code": error.code, "detail": error.detail},
             "heatmap_image": None,
+            "defect_overlay_image": None,
             "segmentation_image": None,
             "original_image": None,
             "model_input_image": None,

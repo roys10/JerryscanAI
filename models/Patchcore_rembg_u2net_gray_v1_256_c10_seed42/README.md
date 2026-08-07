@@ -7,5 +7,7 @@ then runs PatchCore.
 The backend first looks for `u2net.onnx` in this folder and otherwise uses the
 shared `models/preprocessing/rembg/u2net.onnx`. To copy a fully portable folder,
 place `u2net.onnx` beside `model.json`. The checkpoint and ONNX weight are
-ignored by Git. The missing validation threshold keeps results in
-`SHADOW / UNDECIDED`.
+ignored by Git. Its provisional raw PatchCore image-score threshold is 34, the
+ceiling above the maximum score observed across 994 normal `split_v2`
+validation images. This produced zero observed validation false positives;
+defect recall is not yet validated.
