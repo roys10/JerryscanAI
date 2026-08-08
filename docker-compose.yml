@@ -15,6 +15,7 @@ services:
       JERRYSCAN_CONFIG_PATH: /app/runtime-data/settings.json
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      start_period: 60s
       interval: 15s
       timeout: 5s
       retries: 4
