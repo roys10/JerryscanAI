@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -11,6 +12,7 @@ from training.preprocessing.preprocess_dataset import (
     RawLetterboxBackend,
     canonical_json_hash,
     clean_binary_mask,
+    resolve_dataset_backend,
 )
 
 
@@ -53,6 +55,35 @@ class PreprocessDatasetTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "outside image"):
             backend.process(Image.new("RGB", (50, 100)))
+
+    def test_dataset_backend_resolves_black_live_config(self):
+        with TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            parent = {
+                "preprocessing_id": "gray",
+                "backend": "rembg",
+                "background_value": 128,
+            }
+            (config_dir / "gray.json").write_text(json.dumps(parent))
+            black = {
+                "preprocessing_id": "black",
+                "backend": "aligned_mask_recompose",
+                "parent_preprocessing_id": "gray",
+                "parent_config_sha256": canonical_json_hash(parent),
+                "background_value": 0,
+            }
+            black_path = config_dir / "black.json"
+
+            with patch(
+                "training.preprocessing.preprocess_dataset.create_backend"
+            ) as create_backend:
+                resolved, backend = resolve_dataset_backend(black, black_path)
+
+            self.assertIs(backend, create_backend.return_value)
+            self.assertEqual(resolved["backend"], "rembg")
+            self.assertEqual(resolved["preprocessing_id"], "black")
+            self.assertEqual(resolved["background_value"], 0)
+            create_backend.assert_called_once_with(resolved)
 
 
 if __name__ == "__main__":

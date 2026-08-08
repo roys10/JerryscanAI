@@ -18,6 +18,7 @@ from PIL import Image
 from training.datasets.create_dataset_manifest import sha256_file, sha256_manifest
 from training.datasets.materialize_dataset_split import load_manifest_rows
 from training.preprocessing.runtime import (
+    Backend,
     FixedCropBackend,
     RawLetterboxBackend,
     RembgBackend,
@@ -56,6 +57,20 @@ def read_derivative_manifest(path: Path) -> list[dict[str, str]]:
         return []
     with path.open(newline="", encoding="utf-8") as stream:
         return list(csv.DictReader(stream))
+
+
+def resolve_dataset_backend(
+    config: dict[str, Any], config_path: Path
+) -> tuple[dict[str, Any], Backend]:
+    """Resolve live composite configs before creating the batch backend.
+
+    This lets a background-only derivative such as ``rembg_u2net_black_v1``
+    run U²-Net directly onto its requested canvas without first materializing
+    the gray parent dataset. The saved config and derivative config hash remain
+    those of the requested public preprocessing contract.
+    """
+    resolved_config = resolve_live_config(config, config_path.parent)
+    return resolved_config, create_backend(resolved_config)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -109,7 +124,7 @@ def main() -> int:
             print("Cannot resume: preprocessing config does not match partial dataset")
             return 1
     try:
-        backend = create_backend(config)
+        resolved_config, backend = resolve_dataset_backend(config, config_path)
     except (RuntimeError, ValueError) as exc:
         if created_partial:
             shutil.rmtree(partial_output, ignore_errors=True)
@@ -169,7 +184,7 @@ def main() -> int:
                 save_png_atomic(output_mask, mask_path)
                 row["mask_relpath"] = mask_relpath.as_posix()
                 row["mask_sha256"] = sha256_file(mask_path)
-            fail_flags = set(config.get("fail_on_quality_flags", []))
+            fail_flags = set(resolved_config.get("fail_on_quality_flags", []))
             row_flags = set(str(row["quality_flags"]).split(";")) - {""}
             if fail_flags & row_flags:
                 row["status"] = "qa_failed"
