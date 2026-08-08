@@ -39,6 +39,12 @@ Open the Vite URL printed in the terminal (normally
 default. To use another backend address, set `VITE_BACKEND_URL` before starting
 or building the frontend.
 
+For the remote VM deployment on HTTP port 80, use the VM address without an
+explicit port, for example `VITE_BACKEND_URL=http://192.0.2.10`. Vite embeds
+this value when the frontend is built. A frontend served over HTTPS cannot call
+an HTTP backend because browsers block mixed content; that setup requires TLS
+on the backend or an HTTPS reverse proxy.
+
 ## Checks
 
 ```powershell

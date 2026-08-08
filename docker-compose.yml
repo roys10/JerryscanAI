@@ -3,7 +3,7 @@ services:
     build: .
     image: ${JERRYSCAN_IMAGE:-ghcr.io/roys10/jerryscanai:latest}
     ports:
-      - "127.0.0.1:8000:8000"
+      - "0.0.0.0:80:8000"
     volumes:
       - ./models:/app/models:ro
       - ./runtime-data:/app/runtime-data

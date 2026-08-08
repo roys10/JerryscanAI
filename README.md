@@ -105,6 +105,11 @@ runtime files under `runtime-data/`. Inspection history is stored in the active
 same database file in Git as requested; `settings.json` and SQLite's temporary
 WAL/SHM files remain ignored.
 
+The container keeps Uvicorn on `0.0.0.0:8000` internally and Compose publishes
+it on VM port 80 on all network interfaces. With the VM firewall allowing port
+80, the API is therefore available at `http://<VM-IP>/health`; port 8000 does
+not need to be opened externally.
+
 For a normal local run, non-secret alert settings live in
 `backend/config.json`. You may edit the SMTP server/user, recipients, webhook,
 and alert rules there. Keep the SMTP password out of JSON and provide it only
