@@ -8,11 +8,11 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from training.datasets.create_dataset_manifest import sha256_file
 
@@ -147,32 +147,103 @@ class RembgBackend:
             model_dir = (Path.cwd() / model_dir).resolve()
         model_dir.mkdir(parents=True, exist_ok=True)
         os.environ["U2NET_HOME"] = str(model_dir)
-        try:
-            from rembg import new_session, remove
-        except ImportError as exc:
-            raise RuntimeError(
-                'rembg is not installed. Install the "preprocess-rembg" optional dependency.'
-            ) from exc
         self.config = config
-        self.remove = remove
         self.model_name = str(config["model_name"])
-        self.session = new_session(self.model_name)
-        self.version = importlib.metadata.version("rembg")
         model_file = model_dir / str(config["model_filename"])
         self.model_sha256 = sha256_file(model_file) if model_file.is_file() else ""
         expected = str(config.get("expected_model_sha256", "")).lower()
         if expected and self.model_sha256.lower() != expected:
             raise RuntimeError("rembg model hash mismatch")
+        try:
+            self.version = importlib.metadata.version("rembg")
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise RuntimeError(
+                'rembg is not installed. Install the "preprocess-rembg" optional dependency.'
+            ) from exc
+
+        if self.model_name == "u2net" and not bool(
+            config.get("rembg_post_process_mask", False)
+        ):
+            self._predict_mask = self._create_u2net_predictor(model_file)
+        else:
+            try:
+                from rembg import new_session, remove
+            except ImportError as exc:
+                raise RuntimeError(
+                    'rembg is not installed. Install the "preprocess-rembg" optional dependency.'
+                ) from exc
+            session = new_session(self.model_name)
+            self._predict_mask = lambda image: remove(
+                image,
+                session=session,
+                only_mask=True,
+                post_process_mask=bool(
+                    self.config.get("rembg_post_process_mask", False)
+                ),
+            ).convert("L")
+
+    @staticmethod
+    def _create_u2net_predictor(model_file: Path) -> Callable[[Image.Image], Image.Image]:
+        """Create rembg 2.0.76's U²-Net mask path without alpha-matting imports."""
+        if not model_file.is_file():
+            raise RuntimeError(f"rembg model file does not exist: {model_file}")
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise RuntimeError(
+                'onnxruntime is not installed. Install the "preprocess-rembg" optional dependency.'
+            ) from exc
+
+        session_options = ort.SessionOptions()
+        if "OMP_NUM_THREADS" in os.environ:
+            threads = int(os.environ["OMP_NUM_THREADS"])
+            session_options.inter_op_num_threads = threads
+            session_options.intra_op_num_threads = threads
+        available_providers = ort.get_available_providers()
+        device_type = ort.get_device()
+        if device_type == "GPU" and "CUDAExecutionProvider" in available_providers:
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        elif device_type.startswith("GPU") and "ROCMExecutionProvider" in available_providers:
+            providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
+        else:
+            providers = ["CPUExecutionProvider"]
+        session = ort.InferenceSession(
+            str(model_file),
+            sess_options=session_options,
+            providers=providers,
+        )
+        input_name = session.get_inputs()[0].name
+
+        def predict(image: Image.Image) -> Image.Image:
+            oriented = ImageOps.exif_transpose(image).convert("RGB")
+            resized = oriented.resize((320, 320), Image.Resampling.LANCZOS)
+            image_array = np.array(resized)
+            image_array = image_array / max(np.max(image_array), 1e-6)
+            normalized = np.zeros((image_array.shape[0], image_array.shape[1], 3))
+            means = (0.485, 0.456, 0.406)
+            stds = (0.229, 0.224, 0.225)
+            for channel in range(3):
+                normalized[:, :, channel] = (
+                    image_array[:, :, channel] - means[channel]
+                ) / stds[channel]
+            tensor = np.expand_dims(normalized.transpose((2, 0, 1)), 0).astype(
+                np.float32
+            )
+            prediction = session.run(None, {input_name: tensor})[0][:, 0, :, :]
+            minimum, maximum = np.min(prediction), np.max(prediction)
+            prediction = (prediction - minimum) / (maximum - minimum)
+            mask = Image.fromarray(
+                (np.squeeze(prediction).clip(0, 1) * 255).astype("uint8"),
+                mode="L",
+            )
+            return mask.resize(oriented.size, Image.Resampling.LANCZOS)
+
+        return predict
 
     def process(
         self, image: Image.Image
     ) -> tuple[Image.Image, Image.Image, dict[str, Any]]:
-        predicted = self.remove(
-            image,
-            session=self.session,
-            only_mask=True,
-            post_process_mask=bool(self.config.get("rembg_post_process_mask", False)),
-        )
+        predicted = self._predict_mask(image)
         mask, component_count = clean_binary_mask(
             np.asarray(predicted.convert("L")),
             int(self.config["mask_threshold"]),
