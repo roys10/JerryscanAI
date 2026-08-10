@@ -3,14 +3,15 @@
 This React/Vite application is the operator interface for the JerryscanAI
 manufacturing backend. It is separate from the research Model Lab frontend.
 
-The current runtime supports original G01 camera images and exactly one active
-PatchCore model folder. The backend applies that model's preprocessing; do not
-upload a preprocessed derivative. Successful inference returns `PASS` below
-the selected model's raw-score threshold and `FAIL` at or above it. Current
-per-model thresholds are provisional ceilings above each model's maximum
-normal validation score; they are not percentages and defect recall is not yet
-validated. Invalid images show `Wrong input`; unavailable model artifacts are
-reported as an API error rather than as a defective jerrycan.
+The runtime supports exactly one active PatchCore model-set folder and derives
+its camera buttons from that folder's declared angles. Upload one original
+image for every required camera; the backend applies the shared preprocessing
+and matching angle checkpoint. Do not upload preprocessed derivatives.
+Successful inference returns `PASS` below that angle's raw-score threshold and
+`FAIL` at or above it. Threshold calibration provenance is recorded per angle
+in `model.json`; defect recall is not yet validated. Invalid images show
+`Wrong input`; unavailable model artifacts are reported as an API error rather
+than as a defective jerrycan.
 
 Successful results provide three separate views: **Defect Location** draws the
 main-style red anomaly contour, **Anomaly Map** shows the fixed-scale heatmap,

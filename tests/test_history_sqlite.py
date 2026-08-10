@@ -89,6 +89,9 @@ class _UnavailableManager:
     def inspect(self, *_args, **_kwargs):
         raise ModelNotReadyError("No model found: configure JERRYSCAN_MODEL_FOLDER")
 
+    def get_required_angles(self):
+        raise ModelNotReadyError("No model found: configure JERRYSCAN_MODEL_FOLDER")
+
 
 class _FailingManager:
     runtime = None
@@ -96,8 +99,58 @@ class _FailingManager:
     def inspect(self, *_args, **_kwargs):
         raise InferenceRuntimeError("PatchCore inference failed")
 
+    def get_required_angles(self):
+        return ["G01"]
+
+
+class _ConcurrentManager:
+    runtime = None
+
+    def __init__(self):
+        self.barrier = threading.Barrier(2)
+
+    def get_required_angles(self):
+        return ["G01", "G02"]
+
+    def inspect(self, angle, *_args, **_kwargs):
+        self.barrier.wait(timeout=2)
+        return {**_result("PASS", 1.0), "angle": angle}
+
+
+class _FormRequest:
+    async def form(self):
+        return {
+            "G01": UploadFile(filename="G01.png", file=io.BytesIO(b"image-1")),
+            "G02": UploadFile(filename="G02.png", file=io.BytesIO(b"image-2")),
+        }
+
+
+class _NoopAlertManager:
+    def evaluate_session(self, *_args, **_kwargs):
+        return None
+
 
 class BackendHTTPTests(unittest.TestCase):
+    def test_batch_dispatches_distinct_angles_concurrently(self):
+        old_manager = backend_main.model_manager
+        old_history = backend_main.history_manager
+        old_alerts = backend_main.alert_manager
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                backend_main.model_manager = _ConcurrentManager()
+                backend_main.history_manager = HistoryManager(Path(temporary) / "history.db")
+                backend_main.alert_manager = _NoopAlertManager()
+
+                response = asyncio.run(backend_main.inspect_batch(_FormRequest()))
+
+                self.assertEqual(response["required_angles"], ["G01", "G02"])
+                self.assertEqual(set(response["angles"]), {"G01", "G02"})
+                self.assertEqual(response["overall_status"], "PASS")
+        finally:
+            backend_main.model_manager = old_manager
+            backend_main.history_manager = old_history
+            backend_main.alert_manager = old_alerts
+
     def _assert_http_error(self, manager, expected_status: int) -> None:
         old_manager = backend_main.model_manager
         old_history = backend_main.history_manager
@@ -107,7 +160,7 @@ class BackendHTTPTests(unittest.TestCase):
                 backend_main.history_manager = HistoryManager(Path(temporary) / "history.db")
                 upload = UploadFile(filename="G01.png", file=io.BytesIO(b"image"))
                 with self.assertRaises(HTTPException) as caught:
-                    asyncio.run(backend_main.inspect_image(upload))
+                    asyncio.run(backend_main.inspect_image("G01", upload))
                 self.assertEqual(caught.exception.status_code, expected_status)
                 self.assertEqual(backend_main.history_manager.get_stats()["total"], 0)
         finally:

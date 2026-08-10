@@ -28,13 +28,14 @@ Frontend dependencies are installed separately in their respective application d
 
 ## Manufacturing application
 
-The current manufacturing runtime is intentionally simple and G01-only. You
-choose one model by pointing the backend at its folder. For every original
-camera image, the backend runs that folder's preprocessing and PatchCore
-checkpoint, then returns the raw anomaly score, a fixed-scale heatmap, a red
-defect-location contour, and the preprocessing mask as separate UI views.
-The original G01 contract is exactly 1025 x 1281 pixels; resized or already
-preprocessed images are rejected before preprocessing.
+The manufacturing runtime uses one explicitly selected model-set folder. A
+folder can declare one camera (schema 1.0) or multiple cameras (schema 1.1).
+For every original camera image, the backend runs the folder's shared
+preprocessing and the checkpoint declared for that angle, then returns the raw
+anomaly score, a fixed-scale heatmap, a red defect-location contour, and the
+preprocessing mask as separate UI views. The current camera contract is exactly
+1025 x 1281 pixels; resized or already preprocessed images are rejected before
+preprocessing.
 
 Each usable folder has this shape:
 
@@ -42,8 +43,8 @@ Each usable folder has this shape:
 models/Patchcore_<preprocessing>_256_c10_seed42/
 |-- model.json             # tracked runtime and preprocessing contract
 |-- README.md              # tracked setup note
-|-- G01.metadata.json      # tracked training/reproducibility record
-|-- G01.ckpt               # supplied locally; ignored by Git
+|-- G01.metadata.json ... G04.metadata.json  # tracked training records
+|-- G01.ckpt ... G04.ckpt                    # local; ignored by Git
 ```
 
 The stable `model.id` remains tied to the folder and training metadata, while
@@ -51,7 +52,9 @@ the optional `model.display_name` in `model.json` controls the name shown to
 operators. Changing the display name does not require renaming the folder.
 
 Each current folder already includes its matching metadata; normally you add
-only that run's `G01.ckpt`. The rembg folders also need `u2net.onnx`. They first look beside `model.json`,
+the checkpoints declared in `model.json`. Multi-angle files sit beside one
+another in the same model-set folder. The rembg folders also need one shared
+`u2net.onnx`. They first look beside `model.json`,
 which makes the folder portable, then fall back to the shared
 `models/preprocessing/rembg/u2net.onnx` copy.
 
@@ -70,7 +73,11 @@ PatchCore inference prefers CUDA automatically. If CUDA is unavailable or the
 checkpoint cannot load and warm up on the GPU, startup retries on CPU. The
 selected `inference_device` and any `device_fallback_reason` are reported by
 `/health`.
-On startup, the backend verifies the checkpoint and any U2Net weight against
+For multi-angle batches, preprocessing remains single-flight because the
+preprocessing backend is shared, while the independent angle-specific
+PatchCore engines may infer concurrently. This reduces end-to-end latency on
+adequately provisioned hardware without changing model scores or decisions.
+On startup, the backend verifies every declared checkpoint and any U2Net weight against
 the SHA-256 and byte size recorded in `model.json` before either model is loaded.
 
 Start the frontend in another terminal:
@@ -81,12 +88,12 @@ npm install
 npm run dev
 ```
 
-Each model's `model.json` contains its own provisional raw-score threshold:
-raw letterbox 35, fixed crop 36, and both U2Net variants 34. Each value is the
-rounded ceiling above that model's maximum score on the 994 normal `split_v2`
-validation images, producing zero observed validation false positives. These
-are not percentages, and real labeled faults are still required to validate
-defect recall. Invalid images or failed input preprocessing return
+Each angle in `model.json` contains its own raw-score threshold. G01's current
+thresholds came from its normal validation set. The multi-angle U2Net-black
+contract explicitly marks G02-G04's current value of 34 as a temporary,
+uncalibrated operator default; those values require angle-specific validation.
+Raw thresholds are not percentages, and real labeled faults are still required
+to validate defect recall. Invalid images or failed input preprocessing return
 `WRONG_INPUT`; model/runtime failures are HTTP errors and are not recorded as
 defective cans.
 

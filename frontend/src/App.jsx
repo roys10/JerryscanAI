@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, RefreshCw, History, LayoutDashboard, Search, Filter, Settings, Bell, Plus, Trash2, Edit2, Mail, Globe } from 'lucide-react';
 import './Inspection.css';
 import './History.css';
+import { ANGLES, ANGLE_IDS } from './constants';
 
 const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 const QUALITY_FAILURE_BOUNDARY = 70;
@@ -98,9 +99,7 @@ function App() {
 
   // Angle Selection State
   const [activeAngle, setActiveAngle] = useState('G01');
-  const angles = [
-    { id: 'G01', label: 'G01' },
-  ];
+  const [angles, setAngles] = useState(ANGLES);
 
   // View Mode State
   const [viewMode, setViewMode] = useState('defect');
@@ -151,9 +150,19 @@ function App() {
     try {
       const response = await axios.get(`${BACKEND_BASE_URL}/health`);
       setModelConfiguration(response.data);
+      const configuredFromBackend = response.data.required_angles
+        || response.data.supported_angles;
+      const configured = Array.isArray(configuredFromBackend)
+        && configuredFromBackend.length > 0
+        ? configuredFromBackend
+        : ANGLE_IDS;
+      setAngles(configured.map(id => ({ id, label: id })));
+      setActiveAngle(current => configured.includes(current) ? current : configured[0]);
     } catch (err) {
       console.error("Failed to fetch model configuration:", err);
       setModelConfiguration(null);
+      setAngles(ANGLES);
+      setActiveAngle(current => ANGLE_IDS.includes(current) ? current : ANGLE_IDS[0]);
     }
   };
 
@@ -240,8 +249,9 @@ function App() {
     if (inspectionInFlight.current) return;
 
     const anglesToInspect = angles.filter(a => angleData[a.id]?.selectedFile);
-    if (anglesToInspect.length === 0) {
-      setError("No images uploaded to inspect.");
+    const missingAngles = angles.filter(a => !angleData[a.id]?.selectedFile);
+    if (missingAngles.length > 0) {
+      setError(`Upload every required camera image: ${missingAngles.map(a => a.label).join(', ')}.`);
       return;
     }
 
@@ -286,7 +296,7 @@ function App() {
   };
 
   // Calculate overall stats
-  const inspectedCount = Object.values(angleData).filter(d => d.selectedFile || d.result).length;
+  const uploadedCount = angles.filter(angle => angleData[angle.id]?.selectedFile).length;
 
   const renderNavbar = () => (
     <nav className="navbar">
@@ -473,7 +483,7 @@ function App() {
                 <button
                   className="btn-primary"
                   onClick={runBatchInspection}
-                  disabled={loading || inspectedCount === 0}
+                  disabled={loading || uploadedCount !== angles.length}
                   aria-busy={loading}
                 >
                   {loading ? (
@@ -481,7 +491,7 @@ function App() {
                   ) : (
                     <Brain size={20} aria-hidden="true" />
                   )}
-                  {loading ? 'Inspecting Batch...' : `Run Inspection (${inspectedCount})`}
+                  {loading ? 'Inspecting Batch...' : `Run Inspection (${uploadedCount}/${angles.length})`}
                 </button>
                 <div style={{ marginTop: '1rem' }}>
                   <button className="btn-secondary" onClick={clearState} disabled={loading}>
@@ -671,7 +681,7 @@ function App() {
                 </td>
                 <td>
                   <div style={{ display: 'flex', gap: '4px' }}>
-                    {[['G01', 'G01']].map(([id, label]) => (
+                    {ANGLES.map(({ id, label }) => (
                       <div key={id} style={{
                         width: 14, height: 14, borderRadius: '2px', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white',
                         background: !session.angles[id] ? '#e5e7eb' : (session.angles[id].status === 'PASS' ? '#10b981' : (session.angles[id].status === 'FAIL' ? '#ef4444' : '#f59e0b'))

@@ -1,23 +1,79 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "model": {
     "id": "Patchcore_rembg_u2net_black_v1_256_c10_seed42",
     "display_name": "PatchCore - U2Net black background",
     "family": "patchcore",
-    "angle": "G01",
     "image_size": 256
   },
   "input": {
     "width": 1025,
     "height": 1281
   },
-  "artifacts": {
-    "checkpoint": {
-      "file": "G01.ckpt",
-      "sha256": "0cfb366e079729582c2218960e2ba9d1b90dedaa9ca5c235217c93383fbbd522",
-      "size_bytes": 1356221555
+  "angles": {
+    "G01": {
+      "checkpoint": {
+        "file": "G01.ckpt",
+        "sha256": "0cfb366e079729582c2218960e2ba9d1b90dedaa9ca5c235217c93383fbbd522",
+        "size_bytes": 1356221555
+      },
+      "metadata": "G01.metadata.json",
+      "decision_threshold": {
+        "score": "raw_patchcore_image_score",
+        "value": 34,
+        "rule": "fail_if_score_greater_than_or_equal",
+        "provenance": "provisional_G01_split_v2_normal_validation_ceiling",
+        "calibration": {
+          "split": "val",
+          "normal_samples": 994,
+          "maximum_normal_score": 33.44889831542969,
+          "observed_false_positives": 0,
+          "defect_recall_validated": false
+        }
+      }
     },
-    "metadata": "G01.metadata.json"
+    "G02": {
+      "checkpoint": {
+        "file": "G02.ckpt",
+        "sha256": "1b813440e487a9be405555e8045509b0b904b14189985f82862053ddff91eb5e",
+        "size_bytes": 1354335283
+      },
+      "metadata": "G02.metadata.json",
+      "decision_threshold": {
+        "score": "raw_patchcore_image_score",
+        "value": 34,
+        "rule": "fail_if_score_greater_than_or_equal",
+        "provenance": "temporary_uncalibrated_operator_default_requires_G02_validation"
+      }
+    },
+    "G03": {
+      "checkpoint": {
+        "file": "G03.ckpt",
+        "sha256": "ed03760c181a9e7bbf44daa4a767978a6e43fa60ecc7513276498bf20fee00f5",
+        "size_bytes": 1358113843
+      },
+      "metadata": "G03.metadata.json",
+      "decision_threshold": {
+        "score": "raw_patchcore_image_score",
+        "value": 34,
+        "rule": "fail_if_score_greater_than_or_equal",
+        "provenance": "temporary_uncalibrated_operator_default_requires_G03_validation"
+      }
+    },
+    "G04": {
+      "checkpoint": {
+        "file": "G04.ckpt",
+        "sha256": "88d7c72e469fd4ddafd8f3449de797156a22fc7c0882c4600b27e86042d5a12c",
+        "size_bytes": 1358740531
+      },
+      "metadata": "G04.metadata.json",
+      "decision_threshold": {
+        "score": "raw_patchcore_image_score",
+        "value": 34,
+        "rule": "fail_if_score_greater_than_or_equal",
+        "provenance": "temporary_uncalibrated_operator_default_requires_G04_validation"
+      }
+    }
   },
   "preprocessing": {
     "id": "rembg_u2net_black_v1",
@@ -50,19 +106,6 @@
       "shared_fallback": "../preprocessing/rembg/u2net.onnx",
       "sha256": "8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491",
       "size_bytes": 175997641
-    }
-  },
-  "decision_threshold": {
-    "score": "raw_patchcore_image_score",
-    "value": 34,
-    "rule": "fail_if_score_greater_than_or_equal",
-    "provenance": "provisional_split_v2_normal_validation_ceiling",
-    "calibration": {
-      "split": "val",
-      "normal_samples": 994,
-      "maximum_normal_score": 33.44889831542969,
-      "observed_false_positives": 0,
-      "defect_recall_validated": false
     }
   },
   "max_image_bytes": 26214400

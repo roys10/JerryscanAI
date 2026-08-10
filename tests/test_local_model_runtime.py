@@ -219,6 +219,57 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaises(ModelNotReadyError):
                 manager.inspect("G01", b"not used")
 
+    def test_schema_1_1_declares_and_validates_each_angle_independently(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            document = json.loads((folder / "model.json").read_text(encoding="utf-8"))
+            checkpoint = document.pop("artifacts")["checkpoint"]
+            metadata_name = "G01.metadata.json"
+            threshold = document.pop("decision_threshold")
+            document["schema_version"] = "1.1"
+            document["model"].pop("angle")
+            document["angles"] = {
+                "G01": {
+                    "checkpoint": checkpoint,
+                    "metadata": metadata_name,
+                    "decision_threshold": threshold,
+                },
+                "G02": {
+                    "checkpoint": {**checkpoint, "file": "G02.ckpt"},
+                    "metadata": "G02.metadata.json",
+                    "decision_threshold": {**threshold, "value": 9.5},
+                },
+            }
+            (folder / "model.json").write_text(json.dumps(document), encoding="utf-8")
+            (folder / "G02.ckpt").write_bytes(CHECKPOINT_BYTES)
+            metadata = json.loads((folder / metadata_name).read_text(encoding="utf-8"))
+            metadata["model"]["angle"] = "G02"
+            (folder / "G02.metadata.json").write_text(
+                json.dumps(metadata), encoding="utf-8"
+            )
+
+            manifest = LocalModelManifest.load(folder)
+
+            self.assertEqual(manifest.required_angles, ("G01", "G02"))
+            self.assertEqual(manifest.angles["G01"].decision_threshold, 60.0)
+            self.assertEqual(manifest.angles["G02"].decision_threshold, 9.5)
+
+            engines = iter([_FakeEngine(score=10), _FakeEngine(score=10)])
+            runtime = LocalPatchCoreRuntime(
+                manifest,
+                preprocessor_factory=lambda _: _FakePreprocessor(),
+                engine_factory=lambda _: next(engines),
+            )
+            stream = io.BytesIO()
+            Image.new("RGB", (32, 48), "white").save(stream, format="PNG")
+            image_bytes = stream.getvalue()
+
+            self.assertEqual(runtime.predict(image_bytes, "G01")["status"], "PASS")
+            g02_result = runtime.predict(image_bytes, "G02")
+            self.assertEqual(g02_result["status"], "FAIL")
+            self.assertEqual(g02_result["image_threshold"], 9.5)
+            self.assertEqual(g02_result["angle"], "G02")
+
 
 class _FakePreprocessor:
     name = "raw_letterbox"
@@ -254,6 +305,74 @@ class _FakeEngine:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_string_interpolation_is_normalized_for_checkpoint_compatibility(self):
+        from enum import Enum
+
+        class _InterpolationMode(Enum):
+            NEAREST = "nearest"
+            BILINEAR = "bilinear"
+
+        resize = SimpleNamespace(interpolation="bilinear")
+        unchanged = SimpleNamespace(interpolation=_InterpolationMode.NEAREST)
+        transform = SimpleNamespace(transforms=[resize, unchanged])
+
+        converted = RawPatchCoreEngine._normalize_transform_interpolation(
+            transform,
+            _InterpolationMode,
+        )
+
+        self.assertEqual(converted, 1)
+        self.assertIs(resize.interpolation, _InterpolationMode.BILINEAR)
+        self.assertIs(unchanged.interpolation, _InterpolationMode.NEAREST)
+
+    def test_distinct_angle_engines_can_infer_concurrently(self):
+        manifest = LocalModelManifest.load(
+            PROJECT_ROOT
+            / "models"
+            / "Patchcore_rembg_u2net_black_v1_256_c10_seed42",
+            require_artifacts=False,
+        )
+        barrier = threading.Barrier(len(manifest.required_angles))
+
+        class _ConcurrentEngine(_FakeEngine):
+            def predict(self, image):
+                barrier.wait(timeout=2)
+                return super().predict(image)
+
+        runtime = LocalPatchCoreRuntime(
+            manifest,
+            preprocessor_factory=lambda _: _FakePreprocessor(),
+            engine_factory=lambda _: _ConcurrentEngine(),
+        )
+        stream = io.BytesIO()
+        Image.new(
+            "RGB",
+            (manifest.original_width, manifest.original_height),
+            "white",
+        ).save(stream, format="PNG")
+        image_bytes = stream.getvalue()
+        results = {}
+        errors = []
+
+        def inspect(angle):
+            try:
+                results[angle] = runtime.predict(image_bytes, angle)
+            except Exception as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=inspect, args=(angle,))
+            for angle in manifest.required_angles
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=3)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(set(results), set(manifest.required_angles))
+        self.assertTrue(all(result["status"] == "PASS" for result in results.values()))
+
     def test_patchcore_prefers_cuda_and_falls_back_to_cpu_when_initialization_fails(self):
         engine = RawPatchCoreEngine.__new__(RawPatchCoreEngine)
         cuda = SimpleNamespace(type="cuda")

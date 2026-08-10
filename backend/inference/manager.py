@@ -1,4 +1,4 @@
-"""Select and own exactly one local model-folder runtime."""
+"""Select and own exactly one local multi-angle model-folder runtime."""
 
 from __future__ import annotations
 
@@ -84,6 +84,12 @@ class JerryScanModelManager:
         with self._condition:
             return [self.runtime.model_id] if self.runtime is not None else []
 
+    def get_required_angles(self) -> list[str]:
+        with self._condition:
+            if self.runtime is None:
+                raise ModelNotReadyError(self.startup_error or "No local model folder is loaded")
+            return list(self.runtime.manifest.required_angles)
+
     def _not_ready_message(self) -> str:
         with self._condition:
             return self.startup_error or "No local model folder is loaded"
@@ -106,7 +112,7 @@ class JerryScanModelManager:
                 )
             return runtime.predict(image_bytes, angle)
         except InspectionInputError as exc:
-            return runtime.wrong_input_result(exc)
+            return runtime.wrong_input_result(exc, angle)
         except (ModelSelectionError, InferenceRuntimeError):
             raise
         except Exception as exc:
@@ -142,16 +148,21 @@ class JerryScanModelManager:
                 runtime, "model_display_name", runtime.model_id
             ),
             "preprocessing_id": runtime.preprocessing_id,
-            "angle": runtime.angle,
+            "required_angles": list(runtime.manifest.required_angles),
+            "supported_angles": list(runtime.manifest.required_angles),
             "inference_device": getattr(runtime, "inference_device", "unknown"),
+            "inference_devices": getattr(runtime, "inference_devices", {}),
             "device_fallback_reason": getattr(
                 runtime, "device_fallback_reason", None
             ),
-            "decision_threshold": {
-                "score": "raw_patchcore_image_score",
-                "value": runtime.manifest.decision_threshold,
-                "rule": "fail_if_score_greater_than_or_equal",
-                "provisional": True,
+            "decision_thresholds": {
+                angle: {
+                    "score": "raw_patchcore_image_score",
+                    "value": artifact.decision_threshold,
+                    "rule": "fail_if_score_greater_than_or_equal",
+                    "provenance": artifact.threshold_provenance,
+                }
+                for angle, artifact in runtime.manifest.angles.items()
             },
             "quality_score": {
                 "failure_boundary_percentage": 70.0,

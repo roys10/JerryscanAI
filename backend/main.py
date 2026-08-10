@@ -1,13 +1,14 @@
-"""Local G01 manufacturing API backed by one selected model folder."""
+"""Local multi-angle manufacturing API backed by one selected model folder."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any, Optional
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -37,7 +38,7 @@ def _origins() -> list[str]:
     return [origin.strip() for origin in configured.split(",") if origin.strip()]
 
 
-app = FastAPI(title="JerryscanAI local G01 backend")
+app = FastAPI(title="JerryscanAI local multi-angle backend")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins(),
@@ -110,12 +111,14 @@ async def _record(results: dict[str, dict[str, Any]]) -> tuple[str, str]:
     return session_id, overall
 
 
-async def _inspect_g01(upload: UploadFile, model_name: str | None) -> dict[str, Any]:
+async def _inspect_angle(
+    angle: str, upload: UploadFile, model_name: str | None
+) -> dict[str, Any]:
     contents = await _read_bounded(upload)
     try:
         return await run_in_threadpool(
             model_manager.inspect,
-            "G01",
+            angle,
             contents,
             requested_model=model_name,
         )
@@ -132,30 +135,55 @@ async def get_models() -> list[str]:
     return model_manager.get_model_names()
 
 
-@app.post("/inspect/G01")
+@app.post("/inspect/{angle_id}")
 async def inspect_image(
-    file: UploadFile = File(...), model_name: Optional[str] = None
+    angle_id: str, file: UploadFile = File(...), model_name: Optional[str] = None
 ) -> dict[str, Any]:
-    result = await _inspect_g01(file, model_name)
-    session_id, overall = await _record({"G01": result})
+    try:
+        required_angles = model_manager.get_required_angles()
+    except ModelNotReadyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if angle_id not in required_angles:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Angle {angle_id!r} is not configured; expected {required_angles}",
+        )
+    result = await _inspect_angle(angle_id, file, model_name)
+    session_id, overall = await _record({angle_id: result})
     return {**result, "session_id": session_id, "overall_status": overall}
 
 
 @app.post("/inspect-batch")
 async def inspect_batch(
+    request: Request,
     model_name: Optional[str] = None,
-    G01: Optional[UploadFile] = File(None),
 ) -> dict[str, Any]:
-    if G01 is None:
-        raise HTTPException(status_code=400, detail="The required G01 image is missing")
-    result = await _inspect_g01(G01, model_name)
-    results = {"G01": result}
+    try:
+        required_angles = model_manager.get_required_angles()
+    except ModelNotReadyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    form = await request.form()
+    uploads = {angle: form.get(angle) for angle in required_angles}
+    missing = [angle for angle, upload in uploads.items() if upload is None]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Required camera images are missing: {', '.join(missing)}",
+        )
+    inspections = []
+    for angle in required_angles:
+        upload = uploads[angle]
+        if not hasattr(upload, "read"):
+            raise HTTPException(status_code=400, detail=f"{angle} must be an image upload")
+        inspections.append(_inspect_angle(angle, upload, model_name))
+    angle_results = await asyncio.gather(*inspections)
+    results = dict(zip(required_angles, angle_results, strict=True))
     session_id, overall = await _record(results)
     return {
         "session_id": session_id,
         "overall_status": overall,
         "angles": results,
-        "required_angles": ["G01"],
+        "required_angles": required_angles,
     }
 
 
@@ -202,40 +230,53 @@ async def get_stats() -> dict[str, Any]:
 @app.post("/simulate-trigger")
 async def simulate_trigger(model_name: Optional[str] = None) -> dict[str, Any]:
     test_dir = Path(__file__).resolve().parents[1] / "test_images"
-    image_path = next(
-        (
-            path
-            for suffix in (".bmp", ".png", ".jpg", ".jpeg")
-            if (path := test_dir / f"G01{suffix}").is_file()
-        ),
-        None,
-    )
-    if image_path is None:
-        raise HTTPException(status_code=404, detail="Required test_images/G01 image not found")
     try:
-        result = await run_in_threadpool(
-            model_manager.inspect,
-            "G01",
-            image_path.read_bytes(),
-            requested_model=model_name,
-        )
+        required_angles = model_manager.get_required_angles()
     except ModelNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ModelSelectionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except InferenceRuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    session_id, overall = await _record({"G01": result})
+    paths = {
+        angle: next(
+            (
+                path
+                for suffix in (".bmp", ".png", ".jpg", ".jpeg")
+                if (path := test_dir / f"{angle}{suffix}").is_file()
+            ),
+            None,
+        )
+        for angle in required_angles
+    }
+    missing = [angle for angle, path in paths.items() if path is None]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Required test images are missing: {', '.join(missing)}",
+        )
+    results = {}
+    for angle, image_path in paths.items():
+        assert image_path is not None
+        try:
+            results[angle] = await run_in_threadpool(
+                model_manager.inspect,
+                angle,
+                image_path.read_bytes(),
+                requested_model=model_name,
+            )
+        except ModelSelectionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InferenceRuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    session_id, overall = await _record(results)
     return {
         "session_id": session_id,
         "overall_status": overall,
-        "angles": {"G01": result},
+        "angles": results,
+        "required_angles": required_angles,
     }
 
 
 @app.get("/health")
 def health_check() -> dict[str, Any]:
-    return {**model_manager.health(), "supported_angles": ["G01"]}
+    return model_manager.health()
 
 
 @app.get("/ready")
