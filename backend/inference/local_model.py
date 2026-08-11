@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import gc
+import inspect
 import io
 import json
 import logging
@@ -32,6 +33,21 @@ from training.preprocessing.runtime import create_backend, process_single_image
 MANIFEST_FILENAME = "model.json"
 SUPPORTED_BACKENDS = {"raw_letterbox", "fixed_crop", "rembg"}
 LOGGER = logging.getLogger(__name__)
+
+
+def _environment_integer(name: str, default: int, *, minimum: int) -> int:
+    """Read a bounded integer runtime option with a useful startup error."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ModelFolderError(f"{name} must be an integer, received {raw!r}") from exc
+    if value < minimum:
+        qualifier = "zero or greater" if minimum == 0 else f"at least {minimum}"
+        raise ModelFolderError(f"{name} must be {qualifier}, received {value}")
+    return value
 
 
 class ModelFolderError(RuntimeError):
@@ -548,7 +564,7 @@ class LocalModelManifest:
 class RawPatchCoreEngine:
     """Load one checkpoint and expose its raw image score and anomaly map."""
 
-    def __init__(self, checkpoint: Path) -> None:
+    def __init__(self, checkpoint: Path, *, preferred_device: str = "cpu") -> None:
         import anomalib
         import torch
         from anomalib.models import Patchcore
@@ -560,7 +576,10 @@ class RawPatchCoreEngine:
         self.v2 = v2
         self.model = None
         self.device_fallback_reason: str | None = None
-        self._load_on_preferred_device(checkpoint, Patchcore)
+        if preferred_device not in {"cpu", "cuda"}:
+            raise ValueError("preferred_device must be 'cpu' or 'cuda'")
+        self.requested_device = preferred_device
+        self._load_on_preferred_device(checkpoint, Patchcore, preferred_device)
 
     @staticmethod
     def _normalize_transform_interpolation(transform: Any, interpolation_mode: Any) -> int:
@@ -638,10 +657,18 @@ class RawPatchCoreEngine:
         )
         self.warmup_ms = self._warm_up()
 
-    def _load_on_preferred_device(self, checkpoint: Path, patchcore_class: Any) -> None:
-        """Prefer CUDA, falling back to CPU if CUDA initialization is unusable."""
+    def _load_on_preferred_device(
+        self, checkpoint: Path, patchcore_class: Any, preferred_device: str = "cpu"
+    ) -> None:
+        """Load on the requested device, with a fail-safe CUDA-to-CPU fallback."""
         cpu = self.torch.device("cpu")
+        if preferred_device == "cpu":
+            self._initialize_on_device(checkpoint, patchcore_class, cpu)
+            return
+
         if not self.torch.cuda.is_available():
+            self.device_fallback_reason = "CUDA was requested but is not available"
+            LOGGER.warning("%s; falling back to CPU", self.device_fallback_reason)
             self._initialize_on_device(checkpoint, patchcore_class, cpu)
             return
 
@@ -892,8 +919,11 @@ class LocalPatchCoreRuntime:
         self,
         manifest: LocalModelManifest,
         *,
-        engine_factory: Callable[[Path], Any] = RawPatchCoreEngine,
+        engine_factory: Callable[..., Any] = RawPatchCoreEngine,
         preprocessor_factory: Callable[[dict[str, Any]], Any] = create_backend,
+        gpu_model_count: int | None = None,
+        cpu_inference_concurrency: int | None = None,
+        gpu_inference_concurrency: int | None = None,
     ) -> None:
         self.manifest = manifest
         self.model_id = manifest.model_id
@@ -902,6 +932,36 @@ class LocalPatchCoreRuntime:
         self.preprocessing_id = manifest.preprocessing_id
         self.engines: dict[str, Any] = {}
         self.unavailable_angles = dict(manifest.unavailable_angles)
+        self.gpu_model_count = (
+            _environment_integer("JERRYSCAN_GPU_MODEL_COUNT", 0, minimum=0)
+            if gpu_model_count is None
+            else gpu_model_count
+        )
+        self.cpu_inference_concurrency = (
+            _environment_integer(
+                "JERRYSCAN_CPU_INFERENCE_CONCURRENCY", 1, minimum=1
+            )
+            if cpu_inference_concurrency is None
+            else cpu_inference_concurrency
+        )
+        self.gpu_inference_concurrency = (
+            _environment_integer(
+                "JERRYSCAN_GPU_INFERENCE_CONCURRENCY", 1, minimum=1
+            )
+            if gpu_inference_concurrency is None
+            else gpu_inference_concurrency
+        )
+        for name, value, minimum in (
+            ("gpu_model_count", self.gpu_model_count, 0),
+            ("cpu_inference_concurrency", self.cpu_inference_concurrency, 1),
+            ("gpu_inference_concurrency", self.gpu_inference_concurrency, 1),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                raise ModelFolderError(
+                    f"{name} must be an integer "
+                    + ("zero or greater" if minimum == 0 else f"at least {minimum}")
+                )
+        self.requested_inference_devices: dict[str, str] = {}
         try:
             self.preprocessor = preprocessor_factory(manifest.preprocessing_config)
         except Exception as exc:
@@ -914,9 +974,26 @@ class LocalPatchCoreRuntime:
                 },
             ) from exc
 
+        gpu_assignments = 0
         for angle, artifact in manifest.angles.items():
+            preferred_device = (
+                "cuda" if gpu_assignments < self.gpu_model_count else "cpu"
+            )
             try:
-                self.engines[angle] = engine_factory(artifact.checkpoint)
+                try:
+                    signature = inspect.signature(engine_factory)
+                    signature.bind(artifact.checkpoint, preferred_device=preferred_device)
+                except (TypeError, ValueError):
+                    # Preserve small one-argument test and integration factories.
+                    engine = engine_factory(artifact.checkpoint)
+                else:
+                    engine = engine_factory(
+                        artifact.checkpoint, preferred_device=preferred_device
+                    )
+                self.engines[angle] = engine
+                self.requested_inference_devices[angle] = preferred_device
+                if preferred_device == "cuda":
+                    gpu_assignments += 1
             except Exception as exc:
                 self.unavailable_angles[angle] = _angle_unavailable(
                     "engine_initialization", exc
@@ -952,10 +1029,10 @@ class LocalPatchCoreRuntime:
             )
         self.angle = self.available_angles[0]  # schema-1.0 compatibility
         self.engine = self.engines[self.angle]  # schema-1.0 compatibility
-        self.inference_devices = {
-            angle: str(getattr(engine, "device", "unknown"))
-            for angle, engine in self.engines.items()
-        }
+        self.inference_devices = {}
+        for angle, engine in self.engines.items():
+            device = getattr(engine, "device", "unknown")
+            self.inference_devices[angle] = str(getattr(device, "type", device))
         self.device_fallback_reasons = {
             angle: getattr(engine, "device_fallback_reason", None)
             for angle, engine in self.engines.items()
@@ -966,15 +1043,14 @@ class LocalPatchCoreRuntime:
         )
         reasons = [reason for reason in self.device_fallback_reasons.values() if reason]
         self.device_fallback_reason = "; ".join(reasons) if reasons else None
-        # The shared preprocessor is protected because some supported backends
-        # keep mutable per-image state.  Once preprocessing finishes, distinct
-        # angle engines may infer concurrently.  Each individual checkpoint is
-        # still single-flight, so two requests cannot enter the same engine at
-        # once.  This pipelines U2Net work and uses adequately provisioned
-        # CPU/GPU hardware without changing any model output.
+        # U2Net stays on CPU and some preprocessing backends keep mutable state.
+        # PatchCore CPU work is single-flight by default: concurrent memory-bank
+        # searches oversubscribe RAM bandwidth and are dramatically slower on
+        # the measured workstation. GPU work is independently bounded.
         self._preprocessing_gate = threading.BoundedSemaphore(1)
-        self._angle_gates = {
-            angle: threading.BoundedSemaphore(1) for angle in self.required_angles
+        self._device_gates = {
+            "cpu": threading.BoundedSemaphore(self.cpu_inference_concurrency),
+            "cuda": threading.BoundedSemaphore(self.gpu_inference_concurrency),
         }
 
     def _decode(self, image_bytes: bytes, angle: str) -> Image.Image:
@@ -1041,7 +1117,9 @@ class LocalPatchCoreRuntime:
                     "Preprocessing quality checks failed",
                     quality_flags=quality_flags,
                 )
-        with self._angle_gates[angle]:
+        device_type = self.inference_devices.get(angle, "cpu")
+        gate = self._device_gates["cuda" if device_type.startswith("cuda") else "cpu"]
+        with gate:
             try:
                 raw_score, anomaly_map, inference_ms = engine.predict(model_input)
             except Exception as exc:

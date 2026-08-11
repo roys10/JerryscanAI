@@ -262,13 +262,17 @@ function App() {
   const runBatchInspection = async () => {
     if (inspectionInFlight.current) return;
 
-    const requiredAngles = angles.filter(a => availableAngleIds.includes(a.id));
-    const anglesToInspect = requiredAngles.filter(a => angleData[a.id]?.selectedFile);
-    const missingAngles = requiredAngles.filter(a => !angleData[a.id]?.selectedFile);
-    if (missingAngles.length > 0) {
-      setError(`Upload every required camera image: ${missingAngles.map(a => a.label).join(', ')}.`);
+    const selectedAngles = angles.filter(a => angleData[a.id]?.selectedFile);
+    if (selectedAngles.length === 0) {
+      setError('Upload at least one camera image to inspect.');
       return;
     }
+    const unavailableSelected = selectedAngles.filter(a => !availableAngleIds.includes(a.id));
+    if (unavailableSelected.length > 0) {
+      setError(`Cannot inspect unavailable camera models: ${unavailableSelected.map(a => a.label).join(', ')}.`);
+      return;
+    }
+    const anglesToInspect = selectedAngles;
 
     inspectionInFlight.current = true;
     setLoading(true);
@@ -311,10 +315,7 @@ function App() {
   };
 
   // Calculate overall stats
-  const requiredAngleCount = angles.filter(angle => availableAngleIds.includes(angle.id)).length;
-  const uploadedCount = angles.filter(
-    angle => availableAngleIds.includes(angle.id) && angleData[angle.id]?.selectedFile
-  ).length;
+  const uploadedCount = angles.filter(angle => angleData[angle.id]?.selectedFile).length;
 
   const renderNavbar = () => (
     <nav className="navbar">
@@ -512,7 +513,7 @@ function App() {
                 <button
                   className="btn-primary"
                   onClick={runBatchInspection}
-                  disabled={loading || requiredAngleCount === 0 || uploadedCount !== requiredAngleCount}
+                  disabled={loading || uploadedCount === 0}
                   aria-busy={loading}
                 >
                   {loading ? (
@@ -520,7 +521,9 @@ function App() {
                   ) : (
                     <Brain size={20} aria-hidden="true" />
                   )}
-                  {loading ? 'Inspecting Batch...' : `Run Inspection (${uploadedCount}/${requiredAngleCount})`}
+                  {loading
+                    ? 'Inspecting Batch...'
+                    : `Run Inspection (${uploadedCount} image${uploadedCount === 1 ? '' : 's'})`}
                 </button>
                 <div style={{ marginTop: '1rem' }}>
                   <button className="btn-secondary" onClick={clearState} disabled={loading}>

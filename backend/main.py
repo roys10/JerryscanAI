@@ -182,26 +182,53 @@ async def inspect_batch(
     except ModelNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     form = await request.form()
-    uploads = {angle: form.get(angle) for angle in required_angles}
-    missing = [angle for angle, upload in uploads.items() if upload is None]
-    if missing:
+    submitted_fields = list(form.keys())
+    if not submitted_fields:
         raise HTTPException(
             status_code=400,
-            detail=f"Required camera images are missing: {', '.join(missing)}",
+            detail="No images provided",
         )
+
+    unknown = [angle for angle in submitted_fields if angle not in configured_angles]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown camera angle fields: {', '.join(unknown)}; "
+                f"configured angles are {configured_angles}"
+            ),
+        )
+
+    unavailable = [angle for angle in submitted_fields if angle not in required_angles]
+    if unavailable:
+        reasons = []
+        for angle in unavailable:
+            reason = unavailable_angles.get(angle, {})
+            detail = reason.get("detail", "model is not available")
+            reasons.append(f"{angle}: {detail}")
+        raise HTTPException(
+            status_code=503,
+            detail="Uploaded camera models are unavailable: " + "; ".join(reasons),
+        )
+
+    # Preserve the model contract's camera order while inspecting only the
+    # non-empty subset supplied by this request.
+    inspected_angles = [angle for angle in required_angles if angle in form]
+    uploads = {angle: form.get(angle) for angle in inspected_angles}
     inspections = []
-    for angle in required_angles:
+    for angle in inspected_angles:
         upload = uploads[angle]
         if not hasattr(upload, "read"):
             raise HTTPException(status_code=400, detail=f"{angle} must be an image upload")
         inspections.append(_inspect_angle(angle, upload, model_name))
     angle_results = await asyncio.gather(*inspections)
-    results = dict(zip(required_angles, angle_results, strict=True))
+    results = dict(zip(inspected_angles, angle_results, strict=True))
     session_id, overall = await _record(results)
     return {
         "session_id": session_id,
         "overall_status": overall,
         "angles": results,
+        "inspected_angles": inspected_angles,
         "required_angles": required_angles,
         "available_angles": required_angles,
         "configured_angles": configured_angles,

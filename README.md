@@ -63,6 +63,9 @@ the `JERRYSCAN_MODEL_FOLDER` environment variable:
 
 ```dotenv
 JERRYSCAN_MODEL_FOLDER=models/Patchcore_rembg_u2net_black_v1_256_c10_seed42
+JERRYSCAN_GPU_MODEL_COUNT=0
+JERRYSCAN_CPU_INFERENCE_CONCURRENCY=1
+JERRYSCAN_GPU_INFERENCE_CONCURRENCY=1
 ```
 
 From the repository root, install the rembg dependency used by this example and
@@ -76,19 +79,30 @@ uv run uvicorn backend.main:app --reload
 Open `http://127.0.0.1:8000/health`. A complete folder reports `ready`. A
 schema-1.1 folder with at least one usable angle reports `degraded`, lists its
 `configured_angles`, `available_angles`, and structured `unavailable_angles`,
-and accepts batches containing only the available angles. An unavailable
+and accepts any non-empty subset of the available angles. Only uploaded angles
+contribute to the batch decision and history record. An unavailable
 single-angle request returns HTTP 503; no checkpoint is ever substituted for
 another angle. The service is `not_ready` only when no angle can load or the
 shared preprocessing contract cannot load. `ready_for_decisions` remains false
 while production camera coverage is partial.
-PatchCore inference prefers CUDA automatically. If CUDA is unavailable or the
-checkpoint cannot load and warm up on the GPU, startup retries on CPU. The
-selected `inference_device` and any `device_fallback_reason` are reported by
-`/health`.
-For multi-angle batches, preprocessing remains single-flight because the
-preprocessing backend is shared, while the independent angle-specific
-PatchCore engines may infer concurrently. This reduces end-to-end latency on
-adequately provisioned hardware without changing model scores or decisions.
+
+PatchCore is CPU-only by default (`JERRYSCAN_GPU_MODEL_COUNT=0`), including in
+the normal Docker/VM deployment. On a native installation with a CUDA-enabled
+PyTorch build, set the count to the number of angle models to place on the GPU.
+Assignment follows the angle order in `model.json`, skips unavailable angle
+artifacts, and puts every remaining loaded angle on CPU. Use `1` for the 6 GB
+GTX 1660 Super; increase it on a larger GPU only after measuring VRAM use. If
+CUDA is unavailable or a selected checkpoint cannot initialize there, that
+angle falls back to CPU without disabling its usable siblings. `/health`
+reports requested and actual devices plus per-angle fallback reasons.
+
+Shared U2Net preprocessing remains CPU and single-flight. PatchCore inference
+is also serialized per device by default. In particular,
+`JERRYSCAN_CPU_INFERENCE_CONCURRENCY=1` avoids the severe RAM-bandwidth
+oversubscription observed when several large memory-bank searches run at once.
+`JERRYSCAN_GPU_INFERENCE_CONCURRENCY` also defaults to `1`; raise either value
+only after measuring the target machine. These settings change scheduling and
+placement, not scores or decisions.
 On startup, the backend verifies every declared checkpoint and any U2Net weight against
 the SHA-256 and byte size recorded in `model.json` before either model is loaded.
 Angle checkpoints are validated and initialized independently; the shared

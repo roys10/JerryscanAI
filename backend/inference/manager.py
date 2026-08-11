@@ -202,9 +202,26 @@ class JerryScanModelManager:
             "coverage": "partial" if partial else "full",
             "inference_device": getattr(runtime, "inference_device", "unknown"),
             "inference_devices": getattr(runtime, "inference_devices", {}),
+            "requested_inference_devices": getattr(
+                runtime, "requested_inference_devices", {}
+            ),
+            "device_fallback_reasons": getattr(
+                runtime, "device_fallback_reasons", {}
+            ),
             "device_fallback_reason": getattr(
                 runtime, "device_fallback_reason", None
             ),
+            "device_policy": {
+                "gpu_model_count": getattr(runtime, "gpu_model_count", 0),
+                "cpu_inference_concurrency": getattr(
+                    runtime, "cpu_inference_concurrency", 1
+                ),
+                "gpu_inference_concurrency": getattr(
+                    runtime, "gpu_inference_concurrency", 1
+                ),
+                "assignment_order": "model_json_angle_order_skipping_unavailable_angles",
+                "shared_preprocessing_device": "cpu",
+            },
             "decision_thresholds": {
                 angle: {
                     "score": "raw_patchcore_image_score",
