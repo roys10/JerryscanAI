@@ -33,9 +33,9 @@ folder can declare one camera (schema 1.0) or multiple cameras (schema 1.1).
 For every original camera image, the backend runs the folder's shared
 preprocessing and the checkpoint declared for that angle, then returns the raw
 anomaly score, a fixed-scale heatmap, a red defect-location contour, and the
-preprocessing mask as separate UI views. The current camera contract is exactly
-1025 x 1281 pixels; resized or already preprocessed images are rejected before
-preprocessing.
+preprocessing mask, when the selected pipeline produces one, as separate UI
+views. The current camera contract is exactly 1025 x 1281 pixels; resized or
+already preprocessed images are rejected before preprocessing.
 
 Each usable folder has this shape:
 
@@ -58,10 +58,17 @@ another in the same model-set folder. The rembg folders also need one shared
 which makes the folder portable, then fall back to the shared
 `models/preprocessing/rembg/u2net.onnx` copy.
 
-In PowerShell, select a folder and start the API:
+Copy `backend/.env.example` to `backend/.env`, then select the model folder with
+the `JERRYSCAN_MODEL_FOLDER` environment variable:
 
-```powershell
-$env:JERRYSCAN_MODEL_FOLDER = (Resolve-Path "models/Patchcore_rembg_u2net_black_v1_256_c10_seed42")
+```dotenv
+JERRYSCAN_MODEL_FOLDER=models/Patchcore_rembg_u2net_black_v1_256_c10_seed42
+```
+
+From the repository root, install the rembg dependency used by this example and
+start the API:
+
+```console
 uv sync --extra preprocess-rembg
 uv run uvicorn backend.main:app --reload
 ```
@@ -123,14 +130,14 @@ and alert rules there. Keep the SMTP password out of JSON and provide it only
 through the `SMTP_PASSWORD` environment variable. Docker overrides the config
 path so container settings persist under `runtime-data/`.
 
-The original `.github/workflows/deploy.yml` workflow is retained. A push to
-`backend-CD` builds `ghcr.io/roys10/jerryscanai:latest`, copies Compose to the
-configured remote server, creates `backend/.env` from the `SMTP_USER` and
-`SMTP_PASSWORD` GitHub secrets plus the selected container model path, and
-restarts the backend. It does not run the local
-test suite. Because checkpoints and ONNX weights are ignored by Git, the
-selected model folder and its large artifacts must already exist in the remote
-server's `~/jerryscanai/models` directory.
+A push to `backend-CD` triggers `.github/workflows/deploy.yml`. The workflow
+builds `ghcr.io/roys10/jerryscanai:latest`, copies Compose to the configured
+remote server, creates `backend/.env` from the `SMTP_USER` and `SMTP_PASSWORD`
+GitHub secrets, sets `JERRYSCAN_MODEL_FOLDER` to the deployed U2Net-black
+model-set path, and restarts the backend. It does not run the local test suite.
+Because checkpoints and ONNX weights are ignored by Git, the selected model
+folder and its large artifacts must already exist in the remote server's
+`~/jerryscanai/models` directory.
 
 ## Model Lab
 

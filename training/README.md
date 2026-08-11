@@ -8,7 +8,7 @@ JerryscanAI. Run commands from the repository root with Python module syntax.
 - `datasets/`: frozen-manifest creation and split materialization.
 - `preprocessing/`: derivative image and mask generation.
 - `preprocessing/configs/`: versioned preprocessing configurations and model registry.
-- `models/`: PatchCore and future anomaly-model training entry points.
+- `models/`: PatchCore training entry points.
 
 Raw captures remain immutable and outside Git. Frozen sample identities remain
 under `data_manifests/`, generated derivative datasets remain outside Git, and
@@ -21,7 +21,8 @@ The normal execution order is:
 3. Dry-run training against the derivative dataset.
 4. Train the model and record its experiment metadata.
 
-See `docs/preprocessing.md` and `docs/model-development.md` for the controlled
+See [the preprocessing guide](../docs/preprocessing.md) and
+[the model-development guide](../docs/model-development.md) for the controlled
 experiment protocol.
 
 ## Portable GPU PatchCore training

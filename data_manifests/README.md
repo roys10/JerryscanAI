@@ -25,12 +25,12 @@ uv run python -m training.datasets.create_dataset_manifest `
 Materialize the verified split on the same drive using hardlinks, then validate the training command without loading Anomalib:
 
 ```powershell
-python -m training.datasets.materialize_dataset_split `
+uv run python -m training.datasets.materialize_dataset_split `
   --source E:\LearningProjects\AI\JerryscanAI\training_data\G01 `
   --manifest data_manifests\G01\split_v2.csv `
   --output E:\LearningProjects\AI\JerryscanAI\training_data\G01_split_v2
 
-python -m training.models.train_patchcore `
+uv run python -m training.models.train_patchcore `
   --dataset-root E:\LearningProjects\AI\JerryscanAI\training_data\G01_split_v2 `
   --manifest data_manifests\G01\split_v2.csv `
   --dry-run

@@ -13,12 +13,12 @@ in `model.json`; defect recall is not yet validated. Invalid images show
 `Wrong input`; unavailable model artifacts are reported as an API error rather
 than as a defective jerrycan.
 
-Successful results provide three separate views: **Defect Location** draws the
-main-style red anomaly contour, **Anomaly Map** shows the fixed-scale heatmap,
-and **Preprocessing Mask** shows the segmentation mask used to isolate and
-align the jerrycan. The PASS/FAIL badge is deliberately simple. Result details
-show a **Quality score** from 0% to 100%, where 100% means no measured anomaly
-and the failure threshold is 70%. The score is calculated as
+Successful results provide separate **Defect Location** and **Anomaly Map**
+views. Models with segmentation-based preprocessing also provide a
+**Preprocessing Mask** view showing the mask used to isolate and align the
+jerrycan. The PASS/FAIL badge is deliberately simple. Result details show a
+**Quality score** from 0% to 100%, where 100% means no measured anomaly and the
+failure threshold is 70%. The score is calculated as
 `clamp(100 - 30 * raw_score / raw_threshold, 0, 100)`, so the backend's raw
 decision threshold maps exactly to 70%. This is a relative quality index, not
 confidence, probability, or accuracy. Model Configuration shows the model name
@@ -36,7 +36,7 @@ npm run dev
 ```
 
 Open the Vite URL printed in the terminal (normally
-`http://127.0.0.1:5173`). The frontend calls `http://localhost:8000` by
+`http://localhost:5173`). The frontend calls `http://localhost:8000` by
 default. To use another backend address, set `VITE_BACKEND_URL` before starting
 or building the frontend.
 

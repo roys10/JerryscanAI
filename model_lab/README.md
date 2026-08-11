@@ -2,9 +2,9 @@
 
 Model Lab is a separate PatchCore research application in this repository. It
 does not start with, modify, or expose the manufacturing-line application. It
-uses original camera images plus a frozen manifest, selects the same sample IDs
-once, and supplies every model with the preprocessing contract registered with
-that model.
+uses original camera images, selects the same sample IDs once, and supplies
+every model with the preprocessing contract registered with that model.
+Official benchmarks additionally use a frozen manifest and split.
 
 ## Start
 
@@ -55,12 +55,14 @@ or resume. Results are summarized only over sample IDs successfully evaluated
 by every selected model. An incomplete paired set is labeled `incomplete` and
 can be resumed to retry failed rows.
 
-Validation is the default. A locked-test evaluation must use the entire test
-split and creates `.model_lab/locked_test_record.json`, tied to the manifest,
-sample identities, and immutable model contracts. Model Lab refuses another
-test evaluation while this record exists. Resetting it is an explicit
-administrative filesystem action after the experiment owner documents why the
-previous final evaluation is invalid; no reset is exposed in the normal UI.
+Exploratory-folder mode is the default. In official benchmark mode, validation
+is the default split. A locked-test evaluation must use the entire test split
+and creates `locked_test_record.json` in the Model Lab workspace (the default is
+`.model_lab/`). The record is tied to the manifest, sample identities, and
+immutable model contracts. Model Lab refuses another test evaluation while
+this record exists. Resetting it is an explicit administrative filesystem
+action after the experiment owner documents why the previous final evaluation
+is invalid; no reset is exposed in the normal UI.
 
 Thresholds entered in the model editor are recorded as `manual_unverified`.
 A scientifically calibrated threshold should later include its calibration
@@ -104,16 +106,20 @@ modify the model used by the manufacturing backend.
 The manufacturing backend loads exactly one local model folder selected with
 `JERRYSCAN_MODEL_FOLDER`. That folder has its own tracked `model.json`, which
 binds the checkpoint, training metadata, preprocessing configuration, original
-G01 dimensions, and any preprocessing weight by identity and hash. See
+camera-image dimensions, and any preprocessing weight by identity and hash. See
 [the local model-folder guide](../models/README.md). Model Lab registrations
 continue to use the lab registry and workspace so experiments cannot silently
 change the line runtime.
 
-The manufacturing folders currently use the owner's provisional raw-score
-threshold 60 (`score >= 60` means `FAIL`). Model Lab calibration remains
-independent, and its results must not be treated as production PASS/FAIL
-qualification until labeled real faults are used for validation and the locked
-test is evaluated after all decisions are frozen.
+The manufacturing folders currently use per-angle raw-score thresholds from
+their `model.json` contracts (`score >= threshold` means `FAIL`). The tracked
+single-angle G01 contracts currently use provisional thresholds of 34, 35, or
+36 depending on preprocessing. In the multi-angle U2Net-black contract, G01's
+threshold is provisional and G02-G04 are explicitly marked as temporary,
+uncalibrated defaults. Model Lab calibration remains independent, and its
+results must not be treated as production PASS/FAIL qualification until labeled
+real faults are used for validation and the locked test is evaluated after all
+decisions are frozen.
 
 The previous Streamlit files remain temporarily as a legacy exploratory UI and
 must not be used for benchmark claims.
