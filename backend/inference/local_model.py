@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import gc
 import io
 import json
 import logging
@@ -35,6 +36,26 @@ LOGGER = logging.getLogger(__name__)
 
 class ModelFolderError(RuntimeError):
     """The selected local model folder is incomplete or inconsistent."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        configured_angles: tuple[str, ...] = (),
+        unavailable_angles: dict[str, dict[str, str]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.configured_angles = configured_angles
+        self.unavailable_angles = dict(unavailable_angles or {})
+
+
+def _angle_unavailable(stage: str, exc: BaseException) -> dict[str, str]:
+    """Return a stable, JSON-safe explanation for one unavailable angle."""
+    return {
+        "stage": stage,
+        "error_type": type(exc).__name__,
+        "detail": str(exc),
+    }
 
 
 class InspectionInputError(RuntimeError):
@@ -181,7 +202,9 @@ class LocalModelManifest:
     image_size: int
     original_width: int
     original_height: int
+    configured_angles: tuple[str, ...]
     angles: dict[str, AngleModelArtifact]
+    unavailable_angles: dict[str, dict[str, str]]
     preprocessing_id: str
     preprocessing_config: dict[str, Any]
     preprocessing_weight: Path | None
@@ -264,6 +287,7 @@ class LocalModelManifest:
         original_width = _positive_integer(input_contract.get("width"), "input.width")
         original_height = _positive_integer(input_contract.get("height"), "input.height")
 
+        unavailable_angles: dict[str, dict[str, str]] = {}
         if schema_version == "1.0":
             artifacts = document.get("artifacts")
             angle = str(model.get("angle", ""))
@@ -292,6 +316,7 @@ class LocalModelManifest:
                     threshold_provenance=provenance,
                 )
             }
+            configured_angles = (angle,)
         else:
             if model.get("angle") is not None or document.get("artifacts") is not None:
                 raise ModelFolderError(
@@ -300,6 +325,7 @@ class LocalModelManifest:
             angle_contracts = document.get("angles")
             if not isinstance(angle_contracts, dict) or not angle_contracts:
                 raise ModelFolderError("schema-1.1 model.json requires a non-empty angles object")
+            configured_angles = tuple(angle_contracts)
             angles = {}
             for angle, angle_contract in angle_contracts.items():
                 if (
@@ -309,30 +335,35 @@ class LocalModelManifest:
                     or not isinstance(angle_contract, dict)
                 ):
                     raise ModelFolderError(f"Invalid angle contract: {angle!r}")
-                checkpoint_file, checkpoint_sha256, checkpoint_size = _artifact_identity(
-                    angle_contract.get("checkpoint"), f"angles.{angle}.checkpoint"
-                )
-                threshold, provenance = _decision_threshold(
-                    angle_contract.get("decision_threshold"),
-                    f"angles.{angle}.decision_threshold",
-                )
-                angles[angle] = AngleModelArtifact(
-                    angle=angle,
-                    checkpoint=_direct_child(
-                        selected,
-                        checkpoint_file,
-                        f"angles.{angle}.checkpoint.file",
-                    ),
-                    checkpoint_sha256=checkpoint_sha256,
-                    checkpoint_size_bytes=checkpoint_size,
-                    metadata=_direct_child(
-                        selected,
-                        angle_contract.get("metadata"),
-                        f"angles.{angle}.metadata",
-                    ),
-                    decision_threshold=threshold,
-                    threshold_provenance=provenance,
-                )
+                try:
+                    checkpoint_file, checkpoint_sha256, checkpoint_size = _artifact_identity(
+                        angle_contract.get("checkpoint"), f"angles.{angle}.checkpoint"
+                    )
+                    threshold, provenance = _decision_threshold(
+                        angle_contract.get("decision_threshold"),
+                        f"angles.{angle}.decision_threshold",
+                    )
+                    angles[angle] = AngleModelArtifact(
+                        angle=angle,
+                        checkpoint=_direct_child(
+                            selected,
+                            checkpoint_file,
+                            f"angles.{angle}.checkpoint.file",
+                        ),
+                        checkpoint_sha256=checkpoint_sha256,
+                        checkpoint_size_bytes=checkpoint_size,
+                        metadata=_direct_child(
+                            selected,
+                            angle_contract.get("metadata"),
+                            f"angles.{angle}.metadata",
+                        ),
+                        decision_threshold=threshold,
+                        threshold_provenance=provenance,
+                    )
+                except ModelFolderError as exc:
+                    unavailable_angles[angle] = _angle_unavailable(
+                        "contract_validation", exc
+                    )
 
         preprocessing_id = str(preprocessing.get("id", ""))
         config = preprocessing.get("config")
@@ -346,9 +377,19 @@ class LocalModelManifest:
             raise ModelFolderError(f"Unsupported preprocessing backend: {backend or '<missing>'}")
         _positive_size(config.get("output_size"), "preprocessing.config.output_size")
 
-        weight = cls._resolve_preprocessing_weight(
-            selected, preprocessing, backend, require_artifacts=require_artifacts
-        )
+        try:
+            weight = cls._resolve_preprocessing_weight(
+                selected, preprocessing, backend, require_artifacts=require_artifacts
+            )
+        except ModelFolderError as exc:
+            raise ModelFolderError(
+                str(exc),
+                configured_angles=configured_angles,
+                unavailable_angles={
+                    angle: _angle_unavailable("shared_preprocessing_artifact", exc)
+                    for angle in configured_angles
+                },
+            ) from exc
         weight_sha256: str | None = None
         weight_size: int | None = None
         if weight is not None:
@@ -370,7 +411,9 @@ class LocalModelManifest:
             image_size=image_size,
             original_width=original_width,
             original_height=original_height,
+            configured_angles=configured_angles,
             angles=angles,
+            unavailable_angles=unavailable_angles,
             preprocessing_id=preprocessing_id,
             preprocessing_config=config,
             preprocessing_weight=weight,
@@ -379,7 +422,19 @@ class LocalModelManifest:
             max_image_bytes=max_bytes,
         )
         if require_artifacts:
-            manifest.validate_artifacts()
+            if schema_version == "1.0":
+                # Retain the strict behavior of existing single-angle bundles.
+                manifest.validate_artifacts()
+            else:
+                manifest.validate_shared_artifacts()
+                for angle, angle_artifact in tuple(manifest.angles.items()):
+                    try:
+                        manifest.validate_angle_artifacts(angle_artifact)
+                    except ModelFolderError as exc:
+                        manifest.unavailable_angles[angle] = _angle_unavailable(
+                            "artifact_validation", exc
+                        )
+                        manifest.angles.pop(angle)
         return manifest
 
     @staticmethod
@@ -422,13 +477,12 @@ class LocalModelManifest:
         return shared
 
     def validate_artifacts(self) -> None:
+        self.validate_shared_artifacts()
         for angle_artifact in self.angles.values():
-            _verify_artifact(
-                angle_artifact.checkpoint,
-                angle_artifact.checkpoint_sha256,
-                angle_artifact.checkpoint_size_bytes,
-                f"{angle_artifact.angle} PatchCore checkpoint",
-            )
+            self.validate_angle_artifacts(angle_artifact)
+
+    def validate_shared_artifacts(self) -> None:
+        """Validate artifacts shared by every configured camera angle."""
         if self.preprocessing_weight is not None:
             assert self.preprocessing_weight_sha256 is not None
             assert self.preprocessing_weight_size_bytes is not None
@@ -438,8 +492,16 @@ class LocalModelManifest:
                 self.preprocessing_weight_size_bytes,
                 "preprocessing weight",
             )
-        for angle_artifact in self.angles.values():
-            self._validate_angle_metadata(angle_artifact)
+
+    def validate_angle_artifacts(self, angle_artifact: AngleModelArtifact) -> None:
+        """Validate one angle without making sibling angles unusable."""
+        _verify_artifact(
+            angle_artifact.checkpoint,
+            angle_artifact.checkpoint_sha256,
+            angle_artifact.checkpoint_size_bytes,
+            f"{angle_artifact.angle} PatchCore checkpoint",
+        )
+        self._validate_angle_metadata(angle_artifact)
 
     def _validate_angle_metadata(self, angle_artifact: AngleModelArtifact) -> None:
         if not angle_artifact.metadata.is_file() or angle_artifact.metadata.stat().st_size <= 0:
@@ -836,20 +898,59 @@ class LocalPatchCoreRuntime:
         self.manifest = manifest
         self.model_id = manifest.model_id
         self.model_display_name = manifest.display_name
-        self.required_angles = manifest.required_angles
-        self.angle = manifest.angle  # schema-1.0 compatibility
+        self.configured_angles = manifest.configured_angles
         self.preprocessing_id = manifest.preprocessing_id
         self.engines: dict[str, Any] = {}
+        self.unavailable_angles = dict(manifest.unavailable_angles)
         try:
             self.preprocessor = preprocessor_factory(manifest.preprocessing_config)
-            for angle, artifact in manifest.angles.items():
-                self.engines[angle] = engine_factory(artifact.checkpoint)
         except Exception as exc:
-            for engine in self.engines.values():
-                close = getattr(engine, "close", None)
-                if close:
-                    close()
-            raise ModelFolderError(f"Could not load selected model folder: {exc}") from exc
+            raise ModelFolderError(
+                f"Could not load shared preprocessing: {exc}",
+                configured_angles=self.configured_angles,
+                unavailable_angles={
+                    angle: _angle_unavailable("shared_preprocessing", exc)
+                    for angle in self.configured_angles
+                },
+            ) from exc
+
+        for angle, artifact in manifest.angles.items():
+            try:
+                self.engines[angle] = engine_factory(artifact.checkpoint)
+            except Exception as exc:
+                self.unavailable_angles[angle] = _angle_unavailable(
+                    "engine_initialization", exc
+                )
+                LOGGER.exception("Could not initialize %s PatchCore engine", angle)
+                # Failed constructors can leave large Torch objects waiting for
+                # collection. Release them before attempting the next angle so
+                # one OOM does not automatically prevent every later angle.
+                gc.collect()
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:  # pragma: no cover - cleanup must be best effort
+                    LOGGER.debug("Could not clear accelerator cache", exc_info=True)
+
+        self.available_angles = tuple(self.engines)
+        self.required_angles = self.available_angles
+        if not self.available_angles:
+            close = getattr(self.preprocessor, "close", None)
+            if close:
+                close()
+            details = "; ".join(
+                f"{angle}: {reason['detail']}"
+                for angle, reason in self.unavailable_angles.items()
+            )
+            raise ModelFolderError(
+                "No configured angle could be loaded"
+                + (f" ({details})" if details else ""),
+                configured_angles=self.configured_angles,
+                unavailable_angles=self.unavailable_angles,
+            )
+        self.angle = self.available_angles[0]  # schema-1.0 compatibility
         self.engine = self.engines[self.angle]  # schema-1.0 compatibility
         self.inference_devices = {
             angle: str(getattr(engine, "device", "unknown"))
@@ -877,11 +978,18 @@ class LocalPatchCoreRuntime:
         }
 
     def _decode(self, image_bytes: bytes, angle: str) -> Image.Image:
-        if angle not in self.manifest.angles:
+        if angle not in self.engines:
+            reason = self.unavailable_angles.get(angle)
+            if reason is not None:
+                raise InspectionInputError(
+                    "model",
+                    "camera_angle_unavailable",
+                    f"{angle} is configured but unavailable: {reason['detail']}",
+                )
             raise InspectionInputError(
                 "input",
                 "camera_angle_mismatch",
-                f"Selected model accepts {', '.join(self.required_angles)}, not {angle}",
+                f"Selected model accepts {', '.join(self.available_angles)}, not {angle}",
             )
         if not image_bytes:
             raise InspectionInputError("input", "empty_image", "Camera image is empty")
@@ -1014,3 +1122,6 @@ class LocalPatchCoreRuntime:
             close = getattr(engine, "close", None)
             if close:
                 close()
+        close = getattr(self.preprocessor, "close", None)
+        if close:
+            close()

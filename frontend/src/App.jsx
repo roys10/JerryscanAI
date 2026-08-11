@@ -100,6 +100,13 @@ function App() {
   // Angle Selection State
   const [activeAngle, setActiveAngle] = useState('G01');
   const [angles, setAngles] = useState(ANGLES);
+  const backendAvailableAngles = Array.isArray(modelConfiguration?.available_angles)
+    ? modelConfiguration.available_angles
+    : Array.isArray(modelConfiguration?.required_angles)
+      ? modelConfiguration.required_angles
+      : ANGLE_IDS;
+  const availableAngleIds = isArchiveView ? angles.map(angle => angle.id) : backendAvailableAngles;
+  const unavailableAngles = modelConfiguration?.unavailable_angles || {};
 
   // View Mode State
   const [viewMode, setViewMode] = useState('defect');
@@ -150,14 +157,15 @@ function App() {
     try {
       const response = await axios.get(`${BACKEND_BASE_URL}/health`);
       setModelConfiguration(response.data);
-      const configuredFromBackend = response.data.required_angles
-        || response.data.supported_angles;
+      const configuredFromBackend = response.data.configured_angles;
       const configured = Array.isArray(configuredFromBackend)
-        && configuredFromBackend.length > 0
         ? configuredFromBackend
         : ANGLE_IDS;
-      setAngles(configured.map(id => ({ id, label: id })));
-      setActiveAngle(current => configured.includes(current) ? current : configured[0]);
+      // The production camera layout remains visible even while one model is
+      // unavailable. Extra declared angles are appended for forward compatibility.
+      const visible = [...new Set([...ANGLE_IDS, ...configured])];
+      setAngles(visible.map(id => ({ id, label: id })));
+      setActiveAngle(current => visible.includes(current) ? current : visible[0]);
     } catch (err) {
       console.error("Failed to fetch model configuration:", err);
       setModelConfiguration(null);
@@ -225,6 +233,12 @@ function App() {
   const processFile = (file) => {
     if (!file) return;
 
+    if (!availableAngleIds.includes(activeAngle)) {
+      const reason = unavailableAngles[activeAngle]?.detail;
+      setError(`${activeAngle} is unavailable${reason ? `: ${reason}` : '.'}`);
+      return;
+    }
+
     if (!file.type.startsWith('image/')) {
       setError('Please upload an image file (JPEG/PNG/BMP)');
       return;
@@ -248,8 +262,9 @@ function App() {
   const runBatchInspection = async () => {
     if (inspectionInFlight.current) return;
 
-    const anglesToInspect = angles.filter(a => angleData[a.id]?.selectedFile);
-    const missingAngles = angles.filter(a => !angleData[a.id]?.selectedFile);
+    const requiredAngles = angles.filter(a => availableAngleIds.includes(a.id));
+    const anglesToInspect = requiredAngles.filter(a => angleData[a.id]?.selectedFile);
+    const missingAngles = requiredAngles.filter(a => !angleData[a.id]?.selectedFile);
     if (missingAngles.length > 0) {
       setError(`Upload every required camera image: ${missingAngles.map(a => a.label).join(', ')}.`);
       return;
@@ -296,7 +311,10 @@ function App() {
   };
 
   // Calculate overall stats
-  const uploadedCount = angles.filter(angle => angleData[angle.id]?.selectedFile).length;
+  const requiredAngleCount = angles.filter(angle => availableAngleIds.includes(angle.id)).length;
+  const uploadedCount = angles.filter(
+    angle => availableAngleIds.includes(angle.id) && angleData[angle.id]?.selectedFile
+  ).length;
 
   const renderNavbar = () => (
     <nav className="navbar">
@@ -439,6 +457,11 @@ function App() {
                 <span>Threshold</span>
                 <strong>{QUALITY_FAILURE_BOUNDARY}%</strong>
               </div>
+              {!isArchiveView && modelConfiguration?.coverage === 'partial' && (
+                <div className="model-availability-warning" role="status">
+                  Partial coverage: {availableAngleIds.length} of {modelConfiguration.configured_angles?.length || angles.length} camera models available.
+                </div>
+              )}
             </div>
           </div>
 
@@ -449,6 +472,7 @@ function App() {
                 const hasData = angleData[angle.id]?.selectedFile || angleData[angle.id]?.result;
                 const result = angleData[angle.id]?.result;
                 const status = result?.status;
+                const isAvailable = availableAngleIds.includes(angle.id);
 
                 let statusColor = '#9ca3af';
                 if (status === 'PASS') statusColor = '#10b981';
@@ -458,12 +482,17 @@ function App() {
                 return (
                   <div
                     key={angle.id}
-                    className={`angle-btn ${activeAngle === angle.id ? 'active' : ''}`}
+                    className={`angle-btn ${activeAngle === angle.id ? 'active' : ''} ${!isAvailable ? 'unavailable' : ''}`}
                     onClick={() => setActiveAngle(angle.id)}
                     style={{ position: 'relative' }}
+                    aria-disabled={!isAvailable && !isArchiveView}
+                    title={!isAvailable ? (unavailableAngles[angle.id]?.detail || 'Model unavailable') : undefined}
                   >
                     <Camera size={20} style={{ marginBottom: '0.25rem' }} />
                     <div>{angle.label}</div>
+                    {!isAvailable && !isArchiveView && (
+                      <small className="angle-availability">Unavailable</small>
+                    )}
                     {hasData && (
                       <div style={{
                         position: 'absolute', top: 6, right: 6, width: 10, height: 10, borderRadius: '50%',
@@ -483,7 +512,7 @@ function App() {
                 <button
                   className="btn-primary"
                   onClick={runBatchInspection}
-                  disabled={loading || uploadedCount !== angles.length}
+                  disabled={loading || requiredAngleCount === 0 || uploadedCount !== requiredAngleCount}
                   aria-busy={loading}
                 >
                   {loading ? (
@@ -491,7 +520,7 @@ function App() {
                   ) : (
                     <Brain size={20} aria-hidden="true" />
                   )}
-                  {loading ? 'Inspecting Batch...' : `Run Inspection (${uploadedCount}/${angles.length})`}
+                  {loading ? 'Inspecting Batch...' : `Run Inspection (${uploadedCount}/${requiredAngleCount})`}
                 </button>
                 <div style={{ marginTop: '1rem' }}>
                   <button className="btn-secondary" onClick={clearState} disabled={loading}>
@@ -541,10 +570,22 @@ function App() {
           </div>
 
           {!previewUrl && !result ? (
-            <div className={`upload-zone ${isArchiveView ? 'disabled' : ''}`} onClick={() => !isArchiveView && document.getElementById('fileInput').click()}>
-              <Upload size={32} color={isArchiveView ? '#94a3b8' : "var(--primary-color)"} />
-              <h4>{isArchiveView ? 'No Image Data' : 'Upload Image'}</h4>
-              {!isArchiveView && <input id="fileInput" type="file" hidden accept="image/*" onChange={handleFileChange} />}
+            <div
+              className={`upload-zone ${isArchiveView || !availableAngleIds.includes(activeAngle) ? 'disabled' : ''}`}
+              onClick={() => !isArchiveView && availableAngleIds.includes(activeAngle) && document.getElementById('fileInput').click()}
+            >
+              <Upload size={32} color={isArchiveView || !availableAngleIds.includes(activeAngle) ? '#94a3b8' : "var(--primary-color)"} />
+              <h4>
+                {isArchiveView
+                  ? 'No Image Data'
+                  : availableAngleIds.includes(activeAngle)
+                    ? 'Upload Image'
+                    : `${activeAngle} model unavailable`}
+              </h4>
+              {!isArchiveView && !availableAngleIds.includes(activeAngle) && (
+                <p>{unavailableAngles[activeAngle]?.detail || 'This camera is not currently inspectable.'}</p>
+              )}
+              {!isArchiveView && availableAngleIds.includes(activeAngle) && <input id="fileInput" type="file" hidden accept="image/*" onChange={handleFileChange} />}
             </div>
           ) : (
             <div className="preview-container">

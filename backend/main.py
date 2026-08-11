@@ -135,18 +135,37 @@ async def get_models() -> list[str]:
     return model_manager.get_model_names()
 
 
+def _angle_availability() -> tuple[list[str], list[str], dict[str, dict[str, str]]]:
+    """Return available, configured, and unavailable angle contracts."""
+    available = model_manager.get_required_angles()
+    configured_getter = getattr(model_manager, "get_configured_angles", None)
+    unavailable_getter = getattr(model_manager, "get_unavailable_angles", None)
+    configured = configured_getter() if configured_getter else list(available)
+    unavailable = unavailable_getter() if unavailable_getter else {}
+    return list(available), list(configured), dict(unavailable)
+
+
 @app.post("/inspect/{angle_id}")
 async def inspect_image(
     angle_id: str, file: UploadFile = File(...), model_name: Optional[str] = None
 ) -> dict[str, Any]:
     try:
-        required_angles = model_manager.get_required_angles()
+        required_angles, configured_angles, unavailable_angles = _angle_availability()
     except ModelNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if angle_id not in required_angles:
+        if angle_id in unavailable_angles:
+            reason = unavailable_angles[angle_id]
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Angle {angle_id!r} is configured but unavailable at "
+                    f"{reason['stage']}: {reason['detail']}"
+                ),
+            )
         raise HTTPException(
             status_code=404,
-            detail=f"Angle {angle_id!r} is not configured; expected {required_angles}",
+            detail=f"Angle {angle_id!r} is not configured; expected {configured_angles}",
         )
     result = await _inspect_angle(angle_id, file, model_name)
     session_id, overall = await _record({angle_id: result})
@@ -159,7 +178,7 @@ async def inspect_batch(
     model_name: Optional[str] = None,
 ) -> dict[str, Any]:
     try:
-        required_angles = model_manager.get_required_angles()
+        required_angles, configured_angles, unavailable_angles = _angle_availability()
     except ModelNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     form = await request.form()
@@ -184,6 +203,9 @@ async def inspect_batch(
         "overall_status": overall,
         "angles": results,
         "required_angles": required_angles,
+        "available_angles": required_angles,
+        "configured_angles": configured_angles,
+        "unavailable_angles": unavailable_angles,
     }
 
 
@@ -231,7 +253,7 @@ async def get_stats() -> dict[str, Any]:
 async def simulate_trigger(model_name: Optional[str] = None) -> dict[str, Any]:
     test_dir = Path(__file__).resolve().parents[1] / "test_images"
     try:
-        required_angles = model_manager.get_required_angles()
+        required_angles, configured_angles, unavailable_angles = _angle_availability()
     except ModelNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     paths = {
@@ -271,6 +293,9 @@ async def simulate_trigger(model_name: Optional[str] = None) -> dict[str, Any]:
         "overall_status": overall,
         "angles": results,
         "required_angles": required_angles,
+        "available_angles": required_angles,
+        "configured_angles": configured_angles,
+        "unavailable_angles": unavailable_angles,
     }
 
 

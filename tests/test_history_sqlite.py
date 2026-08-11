@@ -117,6 +117,28 @@ class _ConcurrentManager:
         return {**_result("PASS", 1.0), "angle": angle}
 
 
+class _PartialManager:
+    runtime = None
+
+    def get_required_angles(self):
+        return ["G01"]
+
+    def get_configured_angles(self):
+        return ["G01", "G02"]
+
+    def get_unavailable_angles(self):
+        return {
+            "G02": {
+                "stage": "artifact_validation",
+                "error_type": "ModelFolderError",
+                "detail": "Missing G02 checkpoint",
+            }
+        }
+
+    def inspect(self, angle, *_args, **_kwargs):
+        return {**_result("PASS", 1.0), "angle": angle}
+
+
 class _FormRequest:
     async def form(self):
         return {
@@ -150,6 +172,39 @@ class BackendHTTPTests(unittest.TestCase):
             backend_main.model_manager = old_manager
             backend_main.history_manager = old_history
             backend_main.alert_manager = old_alerts
+
+    def test_partial_batch_requires_and_processes_only_available_angles(self):
+        old_manager = backend_main.model_manager
+        old_history = backend_main.history_manager
+        old_alerts = backend_main.alert_manager
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                backend_main.model_manager = _PartialManager()
+                backend_main.history_manager = HistoryManager(Path(temporary) / "history.db")
+                backend_main.alert_manager = _NoopAlertManager()
+
+                response = asyncio.run(backend_main.inspect_batch(_FormRequest()))
+
+                self.assertEqual(response["required_angles"], ["G01"])
+                self.assertEqual(response["configured_angles"], ["G01", "G02"])
+                self.assertEqual(set(response["unavailable_angles"]), {"G02"})
+                self.assertEqual(set(response["angles"]), {"G01"})
+        finally:
+            backend_main.model_manager = old_manager
+            backend_main.history_manager = old_history
+            backend_main.alert_manager = old_alerts
+
+    def test_configured_but_unavailable_angle_is_http_503(self):
+        old_manager = backend_main.model_manager
+        try:
+            backend_main.model_manager = _PartialManager()
+            upload = UploadFile(filename="G02.png", file=io.BytesIO(b"image"))
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(backend_main.inspect_image("G02", upload))
+            self.assertEqual(caught.exception.status_code, 503)
+            self.assertIn("configured but unavailable", str(caught.exception.detail))
+        finally:
+            backend_main.model_manager = old_manager
 
     def _assert_http_error(self, manager, expected_status: int) -> None:
         old_manager = backend_main.model_manager

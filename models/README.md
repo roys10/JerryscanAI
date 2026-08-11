@@ -55,9 +55,11 @@ uv sync --extra preprocess-rembg
 uv run uvicorn backend.main:app --reload
 ```
 
-Upload one original camera image for every angle declared by the selected
-folder. Do not manually preprocess them; the selected folder's shared pipeline
-runs automatically before the matching angle checkpoint. The current contracts
+Upload one original camera image for every currently available angle. The
+backend reports both configured and available angles through `/health`; a
+missing, corrupt, incompatible, or failed angle is listed separately and is
+not required by the batch endpoint. Do not manually preprocess images; the
+selected folder's shared pipeline runs automatically before the matching angle checkpoint. The current contracts
 expect original 1025 x 1281 camera dimensions. Any other size, including a
 1024 x 1024 derivative, correctly returns `WRONG_INPUT` before preprocessing.
 Multi-angle batch requests run distinct PatchCore engines concurrently after a
@@ -66,8 +68,12 @@ machine with sufficient CPU/GPU and memory; requests for the same angle remain
 serialized through that angle's engine.
 
 The backend checks each local checkpoint and rembg weight against the expected
-SHA-256 and byte size in `model.json` before Torch or ONNX loads it. A partial,
-wrong, or corrupted copy leaves the model not ready instead of running it.
+SHA-256 and byte size in `model.json` before Torch or ONNX loads it. Schema-1.1
+angle artifacts are fail-closed independently: usable siblings remain
+available, and the failed angle receives a structured reason without borrowing
+another angle's checkpoint. The service is not ready only when no angle loads
+or the shared preprocessing artifact/runtime fails. Partial coverage is marked
+`degraded` and is not reported as ready for full production decisions.
 
 Each angle declares its own threshold on `raw_patchcore_image_score`; thresholds
 are never inferred from another checkpoint. G01's U2Net-black value of 34 is a

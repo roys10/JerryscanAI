@@ -66,9 +66,14 @@ uv sync --extra preprocess-rembg
 uv run uvicorn backend.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/health`. A complete folder reports
-`ready`; a missing or mismatched model artifact is reported by `/health` and
-inspection requests return HTTP 503 rather than an inspection result.
+Open `http://127.0.0.1:8000/health`. A complete folder reports `ready`. A
+schema-1.1 folder with at least one usable angle reports `degraded`, lists its
+`configured_angles`, `available_angles`, and structured `unavailable_angles`,
+and accepts batches containing only the available angles. An unavailable
+single-angle request returns HTTP 503; no checkpoint is ever substituted for
+another angle. The service is `not_ready` only when no angle can load or the
+shared preprocessing contract cannot load. `ready_for_decisions` remains false
+while production camera coverage is partial.
 PatchCore inference prefers CUDA automatically. If CUDA is unavailable or the
 checkpoint cannot load and warm up on the GPU, startup retries on CPU. The
 selected `inference_device` and any `device_fallback_reason` are reported by
@@ -79,6 +84,8 @@ PatchCore engines may infer concurrently. This reduces end-to-end latency on
 adequately provisioned hardware without changing model scores or decisions.
 On startup, the backend verifies every declared checkpoint and any U2Net weight against
 the SHA-256 and byte size recorded in `model.json` before either model is loaded.
+Angle checkpoints are validated and initialized independently; the shared
+preprocessing weight remains a bundle-wide requirement.
 
 Start the frontend in another terminal:
 

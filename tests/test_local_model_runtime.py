@@ -130,6 +130,33 @@ def _write_folder(
     return folder
 
 
+def _upgrade_to_multi_angle(folder: Path, count: int = 4) -> None:
+    """Expand a temporary schema-1.0 fixture into a schema-1.1 bundle."""
+    document = json.loads((folder / "model.json").read_text(encoding="utf-8"))
+    checkpoint = document.pop("artifacts")["checkpoint"]
+    threshold = document.pop("decision_threshold")
+    document["schema_version"] = "1.1"
+    document["model"].pop("angle")
+    document["angles"] = {}
+    source_metadata = json.loads(
+        (folder / "G01.metadata.json").read_text(encoding="utf-8")
+    )
+    for number in range(1, count + 1):
+        angle = f"G{number:02d}"
+        document["angles"][angle] = {
+            "checkpoint": {**checkpoint, "file": f"{angle}.ckpt"},
+            "metadata": f"{angle}.metadata.json",
+            "decision_threshold": {**threshold, "value": 60.0 + number},
+        }
+        (folder / f"{angle}.ckpt").write_bytes(CHECKPOINT_BYTES)
+        metadata = json.loads(json.dumps(source_metadata))
+        metadata["model"]["angle"] = angle
+        (folder / f"{angle}.metadata.json").write_text(
+            json.dumps(metadata), encoding="utf-8"
+        )
+    (folder / "model.json").write_text(json.dumps(document), encoding="utf-8")
+
+
 class ManifestTests(unittest.TestCase):
     def test_all_four_tracked_preprocessing_contracts(self):
         expected = {
@@ -270,6 +297,75 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(g02_result["image_threshold"], 9.5)
             self.assertEqual(g02_result["angle"], "G02")
 
+    def test_schema_1_1_keeps_one_two_three_or_four_valid_artifacts(self):
+        for available_count in range(1, 5):
+            with self.subTest(available_count=available_count):
+                with tempfile.TemporaryDirectory() as temporary:
+                    folder = _write_folder(Path(temporary))
+                    _upgrade_to_multi_angle(folder)
+                    for number in range(available_count + 1, 5):
+                        (folder / f"G{number:02d}.ckpt").unlink()
+
+                    manifest = LocalModelManifest.load(folder)
+
+                    expected = tuple(f"G{number:02d}" for number in range(1, available_count + 1))
+                    self.assertEqual(manifest.configured_angles, ("G01", "G02", "G03", "G04"))
+                    self.assertEqual(manifest.required_angles, expected)
+                    self.assertEqual(
+                        set(manifest.unavailable_angles),
+                        {f"G{number:02d}" for number in range(available_count + 1, 5)},
+                    )
+
+    def test_schema_1_1_corrupt_artifact_does_not_hide_valid_sibling(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            (folder / "G02.ckpt").write_bytes(b"checkpoinu")
+
+            manifest = LocalModelManifest.load(folder)
+
+            self.assertEqual(manifest.required_angles, ("G01",))
+            self.assertEqual(
+                manifest.unavailable_angles["G02"]["stage"], "artifact_validation"
+            )
+            self.assertIn("SHA-256 mismatch", manifest.unavailable_angles["G02"]["detail"])
+
+    def test_schema_1_1_all_failed_is_structured_not_ready(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            (folder / "G01.ckpt").unlink()
+            (folder / "G02.ckpt").unlink()
+            manifest = LocalModelManifest.load(folder)
+
+            with self.assertRaises(ModelFolderError) as caught:
+                LocalPatchCoreRuntime(
+                    manifest,
+                    preprocessor_factory=lambda _: _FakePreprocessor(),
+                    engine_factory=lambda _: _FakeEngine(),
+                )
+
+            self.assertEqual(caught.exception.configured_angles, ("G01", "G02"))
+            self.assertEqual(set(caught.exception.unavailable_angles), {"G01", "G02"})
+
+    def test_schema_1_1_shared_preprocessing_failure_blocks_every_angle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary), rembg=True)
+            _upgrade_to_multi_angle(folder, count=2)
+            (folder / "u2net.onnx").unlink()
+
+            with self.assertRaises(ModelFolderError) as caught:
+                LocalModelManifest.load(folder)
+
+            self.assertEqual(caught.exception.configured_angles, ("G01", "G02"))
+            self.assertEqual(set(caught.exception.unavailable_angles), {"G01", "G02"})
+            self.assertTrue(
+                all(
+                    reason["stage"] == "shared_preprocessing_artifact"
+                    for reason in caught.exception.unavailable_angles.values()
+                )
+            )
+
 
 class _FakePreprocessor:
     name = "raw_letterbox"
@@ -305,6 +401,82 @@ class _FakeEngine:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_engine_initialization_failure_degrades_only_that_angle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            manifest = LocalModelManifest.load(folder)
+
+            def engine_factory(checkpoint):
+                if checkpoint.name == "G02.ckpt":
+                    raise RuntimeError("simulated angle load failure")
+                return _FakeEngine()
+
+            runtime = LocalPatchCoreRuntime(
+                manifest,
+                preprocessor_factory=lambda _: _FakePreprocessor(),
+                engine_factory=engine_factory,
+            )
+
+            self.assertEqual(runtime.available_angles, ("G01",))
+            self.assertEqual(
+                runtime.unavailable_angles["G02"]["stage"], "engine_initialization"
+            )
+
+    def test_manager_health_reports_partial_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+
+            def runtime_factory(manifest):
+                return LocalPatchCoreRuntime(
+                    manifest,
+                    preprocessor_factory=lambda _: _FakePreprocessor(),
+                    engine_factory=lambda checkpoint: (
+                        _FakeEngine()
+                        if checkpoint.name == "G01.ckpt"
+                        else (_ for _ in ()).throw(RuntimeError("cannot load G02"))
+                    ),
+                )
+
+            manager = JerryScanModelManager(folder, runtime_factory=runtime_factory)
+            manager.load_selected()
+
+            health = manager.health()
+            self.assertEqual(health["status"], "degraded")
+            self.assertTrue(health["ready_for_inference"])
+            self.assertFalse(health["ready_for_decisions"])
+            self.assertEqual(health["coverage"], "partial")
+            self.assertEqual(health["configured_angles"], ["G01", "G02"])
+            self.assertEqual(health["available_angles"], ["G01"])
+            self.assertEqual(health["required_angles"], ["G01"])
+            self.assertIn("G02", health["unavailable_angles"])
+
+    def test_manager_health_reports_all_failed_angles(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            (folder / "G01.ckpt").unlink()
+            (folder / "G02.ckpt").unlink()
+            manager = JerryScanModelManager(
+                folder,
+                runtime_factory=lambda manifest: LocalPatchCoreRuntime(
+                    manifest,
+                    preprocessor_factory=lambda _: _FakePreprocessor(),
+                    engine_factory=lambda _: _FakeEngine(),
+                ),
+            )
+
+            with self.assertRaises(ModelFolderError):
+                manager.load_selected()
+
+            health = manager.health()
+            self.assertEqual(health["status"], "not_ready")
+            self.assertFalse(health["ready_for_inference"])
+            self.assertEqual(health["coverage"], "none")
+            self.assertEqual(health["configured_angles"], ["G01", "G02"])
+            self.assertEqual(set(health["unavailable_angles"]), {"G01", "G02"})
+
     def test_string_interpolation_is_normalized_for_checkpoint_compatibility(self):
         from enum import Enum
 
