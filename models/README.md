@@ -47,10 +47,17 @@ machine by itself, copy the ONNX file into that model folder too.
 
 ## Select and run one model
 
-From the repository root in PowerShell:
+Copy `backend/.env.example` to `backend/.env` and set the
+`JERRYSCAN_MODEL_FOLDER` environment variable to the selected directory. For
+example:
 
-```powershell
-$env:JERRYSCAN_MODEL_FOLDER = (Resolve-Path "models/Patchcore_rembg_u2net_black_v1_256_c10_seed42")
+```dotenv
+JERRYSCAN_MODEL_FOLDER=models/Patchcore_rembg_u2net_black_v1_256_c10_seed42
+```
+
+Then run these commands from the repository root:
+
+```console
 uv sync --extra preprocess-rembg
 uv run uvicorn backend.main:app --reload
 ```
