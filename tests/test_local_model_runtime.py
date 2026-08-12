@@ -4,13 +4,14 @@ import base64
 import io
 import hashlib
 import json
+import os
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock, patch
 
 import numpy as np
 from PIL import Image
@@ -128,6 +129,33 @@ def _write_folder(
         json.dumps(metadata), encoding="utf-8"
     )
     return folder
+
+
+def _upgrade_to_multi_angle(folder: Path, count: int = 4) -> None:
+    """Expand a temporary schema-1.0 fixture into a schema-1.1 bundle."""
+    document = json.loads((folder / "model.json").read_text(encoding="utf-8"))
+    checkpoint = document.pop("artifacts")["checkpoint"]
+    threshold = document.pop("decision_threshold")
+    document["schema_version"] = "1.1"
+    document["model"].pop("angle")
+    document["angles"] = {}
+    source_metadata = json.loads(
+        (folder / "G01.metadata.json").read_text(encoding="utf-8")
+    )
+    for number in range(1, count + 1):
+        angle = f"G{number:02d}"
+        document["angles"][angle] = {
+            "checkpoint": {**checkpoint, "file": f"{angle}.ckpt"},
+            "metadata": f"{angle}.metadata.json",
+            "decision_threshold": {**threshold, "value": 60.0 + number},
+        }
+        (folder / f"{angle}.ckpt").write_bytes(CHECKPOINT_BYTES)
+        metadata = json.loads(json.dumps(source_metadata))
+        metadata["model"]["angle"] = angle
+        (folder / f"{angle}.metadata.json").write_text(
+            json.dumps(metadata), encoding="utf-8"
+        )
+    (folder / "model.json").write_text(json.dumps(document), encoding="utf-8")
 
 
 class ManifestTests(unittest.TestCase):
@@ -270,6 +298,75 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(g02_result["image_threshold"], 9.5)
             self.assertEqual(g02_result["angle"], "G02")
 
+    def test_schema_1_1_keeps_one_two_three_or_four_valid_artifacts(self):
+        for available_count in range(1, 5):
+            with self.subTest(available_count=available_count):
+                with tempfile.TemporaryDirectory() as temporary:
+                    folder = _write_folder(Path(temporary))
+                    _upgrade_to_multi_angle(folder)
+                    for number in range(available_count + 1, 5):
+                        (folder / f"G{number:02d}.ckpt").unlink()
+
+                    manifest = LocalModelManifest.load(folder)
+
+                    expected = tuple(f"G{number:02d}" for number in range(1, available_count + 1))
+                    self.assertEqual(manifest.configured_angles, ("G01", "G02", "G03", "G04"))
+                    self.assertEqual(manifest.required_angles, expected)
+                    self.assertEqual(
+                        set(manifest.unavailable_angles),
+                        {f"G{number:02d}" for number in range(available_count + 1, 5)},
+                    )
+
+    def test_schema_1_1_corrupt_artifact_does_not_hide_valid_sibling(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            (folder / "G02.ckpt").write_bytes(b"checkpoinu")
+
+            manifest = LocalModelManifest.load(folder)
+
+            self.assertEqual(manifest.required_angles, ("G01",))
+            self.assertEqual(
+                manifest.unavailable_angles["G02"]["stage"], "artifact_validation"
+            )
+            self.assertIn("SHA-256 mismatch", manifest.unavailable_angles["G02"]["detail"])
+
+    def test_schema_1_1_all_failed_is_structured_not_ready(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            (folder / "G01.ckpt").unlink()
+            (folder / "G02.ckpt").unlink()
+            manifest = LocalModelManifest.load(folder)
+
+            with self.assertRaises(ModelFolderError) as caught:
+                LocalPatchCoreRuntime(
+                    manifest,
+                    preprocessor_factory=lambda _: _FakePreprocessor(),
+                    engine_factory=lambda _: _FakeEngine(),
+                )
+
+            self.assertEqual(caught.exception.configured_angles, ("G01", "G02"))
+            self.assertEqual(set(caught.exception.unavailable_angles), {"G01", "G02"})
+
+    def test_schema_1_1_shared_preprocessing_failure_blocks_every_angle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary), rembg=True)
+            _upgrade_to_multi_angle(folder, count=2)
+            (folder / "u2net.onnx").unlink()
+
+            with self.assertRaises(ModelFolderError) as caught:
+                LocalModelManifest.load(folder)
+
+            self.assertEqual(caught.exception.configured_angles, ("G01", "G02"))
+            self.assertEqual(set(caught.exception.unavailable_angles), {"G01", "G02"})
+            self.assertTrue(
+                all(
+                    reason["stage"] == "shared_preprocessing_artifact"
+                    for reason in caught.exception.unavailable_angles.values()
+                )
+            )
+
 
 class _FakePreprocessor:
     name = "raw_letterbox"
@@ -288,8 +385,8 @@ class _FakePreprocessor:
 
 
 class _FakeEngine:
-    def __init__(self, score=7.25, pixel_display_bounds=(0.0, 100.0)):
-        self.device = "cuda"
+    def __init__(self, score=7.25, pixel_display_bounds=(0.0, 100.0), device="cpu"):
+        self.device = device
         self.device_fallback_reason = None
         self.received_size = None
         self.closed = False
@@ -305,6 +402,82 @@ class _FakeEngine:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_engine_initialization_failure_degrades_only_that_angle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            manifest = LocalModelManifest.load(folder)
+
+            def engine_factory(checkpoint):
+                if checkpoint.name == "G02.ckpt":
+                    raise RuntimeError("simulated angle load failure")
+                return _FakeEngine()
+
+            runtime = LocalPatchCoreRuntime(
+                manifest,
+                preprocessor_factory=lambda _: _FakePreprocessor(),
+                engine_factory=engine_factory,
+            )
+
+            self.assertEqual(runtime.available_angles, ("G01",))
+            self.assertEqual(
+                runtime.unavailable_angles["G02"]["stage"], "engine_initialization"
+            )
+
+    def test_manager_health_reports_partial_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+
+            def runtime_factory(manifest):
+                return LocalPatchCoreRuntime(
+                    manifest,
+                    preprocessor_factory=lambda _: _FakePreprocessor(),
+                    engine_factory=lambda checkpoint: (
+                        _FakeEngine()
+                        if checkpoint.name == "G01.ckpt"
+                        else (_ for _ in ()).throw(RuntimeError("cannot load G02"))
+                    ),
+                )
+
+            manager = JerryScanModelManager(folder, runtime_factory=runtime_factory)
+            manager.load_selected()
+
+            health = manager.health()
+            self.assertEqual(health["status"], "degraded")
+            self.assertTrue(health["ready_for_inference"])
+            self.assertFalse(health["ready_for_decisions"])
+            self.assertEqual(health["coverage"], "partial")
+            self.assertEqual(health["configured_angles"], ["G01", "G02"])
+            self.assertEqual(health["available_angles"], ["G01"])
+            self.assertEqual(health["required_angles"], ["G01"])
+            self.assertIn("G02", health["unavailable_angles"])
+
+    def test_manager_health_reports_all_failed_angles(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            (folder / "G01.ckpt").unlink()
+            (folder / "G02.ckpt").unlink()
+            manager = JerryScanModelManager(
+                folder,
+                runtime_factory=lambda manifest: LocalPatchCoreRuntime(
+                    manifest,
+                    preprocessor_factory=lambda _: _FakePreprocessor(),
+                    engine_factory=lambda _: _FakeEngine(),
+                ),
+            )
+
+            with self.assertRaises(ModelFolderError):
+                manager.load_selected()
+
+            health = manager.health()
+            self.assertEqual(health["status"], "not_ready")
+            self.assertFalse(health["ready_for_inference"])
+            self.assertEqual(health["coverage"], "none")
+            self.assertEqual(health["configured_angles"], ["G01", "G02"])
+            self.assertEqual(set(health["unavailable_angles"]), {"G01", "G02"})
+
     def test_string_interpolation_is_normalized_for_checkpoint_compatibility(self):
         from enum import Enum
 
@@ -325,7 +498,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIs(resize.interpolation, _InterpolationMode.BILINEAR)
         self.assertIs(unchanged.interpolation, _InterpolationMode.NEAREST)
 
-    def test_distinct_angle_engines_can_infer_concurrently(self):
+    def test_distinct_gpu_angle_engines_can_use_configured_concurrency(self):
         manifest = LocalModelManifest.load(
             PROJECT_ROOT
             / "models"
@@ -342,7 +515,9 @@ class RuntimeTests(unittest.TestCase):
         runtime = LocalPatchCoreRuntime(
             manifest,
             preprocessor_factory=lambda _: _FakePreprocessor(),
-            engine_factory=lambda _: _ConcurrentEngine(),
+            engine_factory=lambda _, **__: _ConcurrentEngine(device="cuda"),
+            gpu_model_count=len(manifest.required_angles),
+            gpu_inference_concurrency=len(manifest.required_angles),
         )
         stream = io.BytesIO()
         Image.new(
@@ -388,7 +563,7 @@ class RuntimeTests(unittest.TestCase):
             side_effect=[RuntimeError("GPU out of memory"), None]
         )
 
-        engine._load_on_preferred_device(Path("model.ckpt"), object())
+        engine._load_on_preferred_device(Path("model.ckpt"), object(), "cuda")
 
         self.assertEqual(
             [call.args[2].type for call in engine._initialize_on_device.call_args_list],
@@ -616,9 +791,179 @@ class RuntimeTests(unittest.TestCase):
 
             health = manager.health()
 
-            self.assertEqual(health["inference_device"], "cuda")
+            self.assertEqual(health["inference_device"], "cpu")
             self.assertIsNone(health["device_fallback_reason"])
             self.assertEqual(health["display_name"], "Example production model")
+
+    def test_default_device_policy_assigns_every_angle_to_cpu(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {}, clear=True
+        ):
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=3)
+            manifest = LocalModelManifest.load(folder)
+            requested = []
+
+            def factory(checkpoint, *, preferred_device):
+                requested.append((checkpoint.stem, preferred_device))
+                return _FakeEngine(device=preferred_device)
+
+            runtime = LocalPatchCoreRuntime(
+                manifest,
+                preprocessor_factory=lambda _: _FakePreprocessor(),
+                engine_factory=factory,
+            )
+
+            self.assertEqual(
+                requested, [("G01", "cpu"), ("G02", "cpu"), ("G03", "cpu")]
+            )
+            self.assertEqual(runtime.gpu_model_count, 0)
+            self.assertEqual(runtime.cpu_inference_concurrency, 1)
+
+    def test_gpu_assignment_follows_manifest_order_and_skips_unavailable_angle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=4)
+            (folder / "G02.ckpt").unlink()
+            manifest = LocalModelManifest.load(folder)
+            requested = []
+
+            def factory(checkpoint, *, preferred_device):
+                requested.append((checkpoint.stem, preferred_device))
+                return _FakeEngine(device=preferred_device)
+
+            runtime = LocalPatchCoreRuntime(
+                manifest,
+                preprocessor_factory=lambda _: _FakePreprocessor(),
+                engine_factory=factory,
+                gpu_model_count=2,
+            )
+
+            self.assertEqual(
+                requested, [("G01", "cuda"), ("G03", "cuda"), ("G04", "cpu")]
+            )
+            self.assertEqual(runtime.available_angles, ("G01", "G03", "G04"))
+            self.assertIn("G02", runtime.unavailable_angles)
+
+    def test_invalid_device_environment_values_fail_startup(self):
+        manifest = LocalModelManifest.load(
+            PROJECT_ROOT
+            / "models"
+            / "Patchcore_rembg_u2net_black_v1_256_c10_seed42",
+            require_artifacts=False,
+        )
+        cases = {
+            "JERRYSCAN_GPU_MODEL_COUNT": "-1",
+            "JERRYSCAN_CPU_INFERENCE_CONCURRENCY": "0",
+            "JERRYSCAN_GPU_INFERENCE_CONCURRENCY": "many",
+        }
+        for name, value in cases.items():
+            with self.subTest(name=name), patch.dict(
+                os.environ, {name: value}, clear=True
+            ):
+                with self.assertRaisesRegex(ModelFolderError, name):
+                    LocalPatchCoreRuntime(
+                        manifest,
+                        preprocessor_factory=lambda _: _FakePreprocessor(),
+                        engine_factory=lambda _: _FakeEngine(),
+                    )
+
+    def test_cuda_unavailable_falls_back_selected_engine_to_cpu(self):
+        engine = RawPatchCoreEngine.__new__(RawPatchCoreEngine)
+        cpu = SimpleNamespace(type="cpu")
+        engine.torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: False),
+            device=lambda name: cpu,
+        )
+        engine.model = None
+        engine.device_fallback_reason = None
+        engine._initialize_on_device = Mock()
+
+        engine._load_on_preferred_device(Path("model.ckpt"), object(), "cuda")
+
+        engine._initialize_on_device.assert_called_once_with(
+            Path("model.ckpt"), ANY, cpu
+        )
+        self.assertEqual(
+            engine.device_fallback_reason,
+            "CUDA was requested but is not available",
+        )
+
+    def test_health_reports_requested_actual_devices_and_per_angle_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+
+            def runtime_factory(manifest):
+                def engine_factory(_, *, preferred_device):
+                    engine = _FakeEngine(device="cpu")
+                    if preferred_device == "cuda":
+                        engine.device_fallback_reason = "simulated CUDA OOM"
+                    return engine
+
+                return LocalPatchCoreRuntime(
+                    manifest,
+                    preprocessor_factory=lambda _: _FakePreprocessor(),
+                    engine_factory=engine_factory,
+                    gpu_model_count=1,
+                )
+
+            manager = JerryScanModelManager(folder, runtime_factory=runtime_factory)
+            manager.load_selected()
+            health = manager.health()
+
+            self.assertEqual(
+                health["requested_inference_devices"],
+                {"G01": "cuda", "G02": "cpu"},
+            )
+            self.assertEqual(
+                health["inference_devices"], {"G01": "cpu", "G02": "cpu"}
+            )
+            self.assertEqual(
+                health["device_fallback_reasons"]["G01"], "simulated CUDA OOM"
+            )
+            self.assertEqual(health["device_policy"]["gpu_model_count"], 1)
+
+    def test_cpu_patchcore_inference_is_serialized_by_default(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = _write_folder(Path(temporary))
+            _upgrade_to_multi_angle(folder, count=2)
+            manifest = LocalModelManifest.load(folder)
+            state = {"active": 0, "maximum": 0}
+            state_lock = threading.Lock()
+
+            class _MeasuredCpuEngine(_FakeEngine):
+                def predict(self, image):
+                    with state_lock:
+                        state["active"] += 1
+                        state["maximum"] = max(state["maximum"], state["active"])
+                    time.sleep(0.05)
+                    try:
+                        return super().predict(image)
+                    finally:
+                        with state_lock:
+                            state["active"] -= 1
+
+            runtime = LocalPatchCoreRuntime(
+                manifest,
+                preprocessor_factory=lambda _: _FakePreprocessor(),
+                engine_factory=lambda _, **__: _MeasuredCpuEngine(device="cpu"),
+                cpu_inference_concurrency=1,
+            )
+            stream = io.BytesIO()
+            Image.new("RGB", (32, 48), "white").save(stream, format="PNG")
+            image_bytes = stream.getvalue()
+            threads = [
+                threading.Thread(target=runtime.predict, args=(image_bytes, angle))
+                for angle in runtime.available_angles
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=2)
+
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            self.assertEqual(state["maximum"], 1)
 
 
 class _BlockingRuntime:

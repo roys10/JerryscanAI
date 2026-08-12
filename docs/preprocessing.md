@@ -15,15 +15,23 @@ The preprocessing model may use train and validation data for configuration. The
 
 ## Current variants
 
-| ID | Status | Purpose |
-|---|---|---|
-| `raw_letterbox_v1` | Complete | Model-free aspect-ratio-preserving control |
-| `rembg_u2net_gray_v1` | Complete | Existing-method equivalent with pinned U²-Net and reproducible masks |
-| `rembg_u2net_black_v1` | Complete | Black-background recomposition of the completed aligned U²-Net derivative; no U²-Net rerun |
-| `rembg_isnet_gray_v1` | Full run blocked by smoke-test QA | Newer rembg model retained as a documented rejected/pending variant |
-| `fixed_crop_v1` | Complete | Model-free conservative crop based on training-mask bounds |
-| `sam2_tiny_box_gray_v1` | Checkpoint/config prepared; Linux runtime unavailable locally | SAM 2.1 tiny with one frozen box prompt for G01 |
-| `yolo_jerrycan_seg_v1` | Pending reviewed labels/license | Supervised single-class production segmentation candidate |
+| ID | Status | Used in the current PatchCore comparison? | Purpose or decision reason |
+|---|---|---|---|
+| `raw_letterbox_v1` | Complete | Yes | Model-free aspect-ratio-preserving control |
+| `rembg_u2net_gray_v1` | Complete | Yes | Existing-method equivalent with pinned U²-Net and reproducible masks |
+| `rembg_u2net_black_v1` | Complete | Yes | Black-background recomposition of the completed aligned U²-Net derivative; no U²-Net rerun |
+| `rembg_isnet_gray_v1` | Full run blocked by smoke-test QA | No | The smoke test retained background inside the handle opening on multiple samples, so it did not meet mask QA |
+| `fixed_crop_v1` | Complete | Yes | Model-free conservative crop based on training-mask bounds |
+| `sam2_tiny_box_gray_v1` | Not used | No | SAM is a general promptable segmenter and would add prompt/mask-selection complexity, higher runtime, and another source of mask variation without a demonstrated benefit over the completed, stable U²-Net masks for this fixed single-object setup |
+| `yolo_jerrycan_seg_v1` | Not used | No | A reliable YOLO segmentation model would first require a reviewed domain-specific mask dataset, supervised training, and deployment-license resolution; using an untrained general YOLO model would not provide a fair or dependable jerrycan mask comparison |
+
+SAM and YOLO remain possible future challengers, but they were deliberately
+excluded from the current controlled comparison. U²-Net already produced a
+complete, reproducible mask set with zero recorded failures for G01. Adding SAM
+or YOLO now would introduce extra variables and cost before there is evidence
+that U²-Net segmentation quality is the limiting factor. They should be
+reconsidered only if reviewed fault images reveal systematic U²-Net boundary
+failures that affect defect detection.
 
 The official rembg library supports reusable inference sessions and automatically downloaded model weights. This project pins rembg 2.0.76 and stores weights in `models/preprocessing/rembg/`; each derivative manifest records the model SHA-256. See the [official rembg repository](https://github.com/danielgatis/rembg).
 
@@ -110,7 +118,14 @@ directory; a changed configuration or parent needs a new preprocessing ID.
 
 ## SAM 2.1 workflow
 
-Use the official SAM 2.1 tiny checkpoint first; it is the lowest-cost useful SAM comparison. Determine one G01 box prompt from training images only, freeze it in configuration, and use a deterministic candidate-selection rule based on predicted quality plus plausible area, centroid, and component count. Do not treat filename order as video unless capture continuity is independently confirmed. SAM 2 code and checkpoints are Apache-2.0; follow the [official repository](https://github.com/facebookresearch/sam2).
+This is a retained future-work protocol, not part of the current comparison.
+If SAM is reconsidered, use the official SAM 2.1 tiny checkpoint first; it is
+the lowest-cost useful SAM comparison. Determine one G01 box prompt from
+training images only, freeze it in configuration, and use a deterministic
+candidate-selection rule based on predicted quality plus plausible area,
+centroid, and component count. Do not treat filename order as video unless
+capture continuity is independently confirmed. SAM 2 code and checkpoints are
+Apache-2.0; follow the [official repository](https://github.com/facebookresearch/sam2).
 
 The checkpoint is already imported and hash-pinned. The official installation
 instructions require Linux and strongly recommend WSL on Windows. WSL is not
@@ -128,7 +143,13 @@ Before full generation:
 
 ## YOLO segmentation workflow
 
-YOLO requires reviewed polygon/mask labels; generated masks are not accepted directly as ground truth. Build an initial 100-image annotation set from train/validation only, sampled across normal appearance and segmentation failure modes. Correct SAM/U²-Net masks manually, freeze mask semantics, then run a 25/50/100-label learning curve before deciding whether more labels are justified.
+This is a retained future-work protocol, not part of the current comparison.
+YOLO requires reviewed polygon/mask labels; generated masks are not accepted
+directly as ground truth. Build an initial 100-image annotation set from
+train/validation only, sampled across normal appearance and segmentation
+failure modes. Correct SAM/U²-Net masks manually, freeze mask semantics, then
+run a 25/50/100-label learning curve before deciding whether more labels are
+justified.
 
 After an approved segmentation variant is complete, create the seed annotation set with:
 

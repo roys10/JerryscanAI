@@ -4,9 +4,11 @@ This React/Vite application is the operator interface for the JerryscanAI
 manufacturing backend. It is separate from the research Model Lab frontend.
 
 The runtime supports exactly one active PatchCore model-set folder and derives
-its camera buttons from that folder's declared angles. Upload one original
-image for every required camera; the backend applies the shared preprocessing
-and matching angle checkpoint. Do not upload preprocessed derivatives.
+camera availability from that folder's declared angles. Upload original images
+for any non-empty subset of available cameras (one to four); the backend applies
+the shared preprocessing and matching angle checkpoint only to those images.
+Do not upload preprocessed derivatives. An upload for an unknown or currently
+unavailable camera is rejected explicitly and is never treated as a passing view.
 Successful inference returns `PASS` below that angle's raw-score threshold and
 `FAIL` at or above it. Threshold calibration provenance is recorded per angle
 in `model.json`; defect recall is not yet validated. Invalid images show

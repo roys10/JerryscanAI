@@ -135,18 +135,37 @@ async def get_models() -> list[str]:
     return model_manager.get_model_names()
 
 
+def _angle_availability() -> tuple[list[str], list[str], dict[str, dict[str, str]]]:
+    """Return available, configured, and unavailable angle contracts."""
+    available = model_manager.get_required_angles()
+    configured_getter = getattr(model_manager, "get_configured_angles", None)
+    unavailable_getter = getattr(model_manager, "get_unavailable_angles", None)
+    configured = configured_getter() if configured_getter else list(available)
+    unavailable = unavailable_getter() if unavailable_getter else {}
+    return list(available), list(configured), dict(unavailable)
+
+
 @app.post("/inspect/{angle_id}")
 async def inspect_image(
     angle_id: str, file: UploadFile = File(...), model_name: Optional[str] = None
 ) -> dict[str, Any]:
     try:
-        required_angles = model_manager.get_required_angles()
+        required_angles, configured_angles, unavailable_angles = _angle_availability()
     except ModelNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if angle_id not in required_angles:
+        if angle_id in unavailable_angles:
+            reason = unavailable_angles[angle_id]
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Angle {angle_id!r} is configured but unavailable at "
+                    f"{reason['stage']}: {reason['detail']}"
+                ),
+            )
         raise HTTPException(
             status_code=404,
-            detail=f"Angle {angle_id!r} is not configured; expected {required_angles}",
+            detail=f"Angle {angle_id!r} is not configured; expected {configured_angles}",
         )
     result = await _inspect_angle(angle_id, file, model_name)
     session_id, overall = await _record({angle_id: result})
@@ -159,31 +178,61 @@ async def inspect_batch(
     model_name: Optional[str] = None,
 ) -> dict[str, Any]:
     try:
-        required_angles = model_manager.get_required_angles()
+        required_angles, configured_angles, unavailable_angles = _angle_availability()
     except ModelNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     form = await request.form()
-    uploads = {angle: form.get(angle) for angle in required_angles}
-    missing = [angle for angle, upload in uploads.items() if upload is None]
-    if missing:
+    submitted_fields = list(form.keys())
+    if not submitted_fields:
         raise HTTPException(
             status_code=400,
-            detail=f"Required camera images are missing: {', '.join(missing)}",
+            detail="No images provided",
         )
+
+    unknown = [angle for angle in submitted_fields if angle not in configured_angles]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown camera angle fields: {', '.join(unknown)}; "
+                f"configured angles are {configured_angles}"
+            ),
+        )
+
+    unavailable = [angle for angle in submitted_fields if angle not in required_angles]
+    if unavailable:
+        reasons = []
+        for angle in unavailable:
+            reason = unavailable_angles.get(angle, {})
+            detail = reason.get("detail", "model is not available")
+            reasons.append(f"{angle}: {detail}")
+        raise HTTPException(
+            status_code=503,
+            detail="Uploaded camera models are unavailable: " + "; ".join(reasons),
+        )
+
+    # Preserve the model contract's camera order while inspecting only the
+    # non-empty subset supplied by this request.
+    inspected_angles = [angle for angle in required_angles if angle in form]
+    uploads = {angle: form.get(angle) for angle in inspected_angles}
     inspections = []
-    for angle in required_angles:
+    for angle in inspected_angles:
         upload = uploads[angle]
         if not hasattr(upload, "read"):
             raise HTTPException(status_code=400, detail=f"{angle} must be an image upload")
         inspections.append(_inspect_angle(angle, upload, model_name))
     angle_results = await asyncio.gather(*inspections)
-    results = dict(zip(required_angles, angle_results, strict=True))
+    results = dict(zip(inspected_angles, angle_results, strict=True))
     session_id, overall = await _record(results)
     return {
         "session_id": session_id,
         "overall_status": overall,
         "angles": results,
+        "inspected_angles": inspected_angles,
         "required_angles": required_angles,
+        "available_angles": required_angles,
+        "configured_angles": configured_angles,
+        "unavailable_angles": unavailable_angles,
     }
 
 
@@ -225,53 +274,6 @@ async def get_history_session(session_id: str) -> dict[str, Any]:
 @app.get("/stats")
 async def get_stats() -> dict[str, Any]:
     return history_manager.get_stats()
-
-
-@app.post("/simulate-trigger")
-async def simulate_trigger(model_name: Optional[str] = None) -> dict[str, Any]:
-    test_dir = Path(__file__).resolve().parents[1] / "test_images"
-    try:
-        required_angles = model_manager.get_required_angles()
-    except ModelNotReadyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    paths = {
-        angle: next(
-            (
-                path
-                for suffix in (".bmp", ".png", ".jpg", ".jpeg")
-                if (path := test_dir / f"{angle}{suffix}").is_file()
-            ),
-            None,
-        )
-        for angle in required_angles
-    }
-    missing = [angle for angle, path in paths.items() if path is None]
-    if missing:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Required test images are missing: {', '.join(missing)}",
-        )
-    results = {}
-    for angle, image_path in paths.items():
-        assert image_path is not None
-        try:
-            results[angle] = await run_in_threadpool(
-                model_manager.inspect,
-                angle,
-                image_path.read_bytes(),
-                requested_model=model_name,
-            )
-        except ModelSelectionError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except InferenceRuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-    session_id, overall = await _record(results)
-    return {
-        "session_id": session_id,
-        "overall_status": overall,
-        "angles": results,
-        "required_angles": required_angles,
-    }
 
 
 @app.get("/health")

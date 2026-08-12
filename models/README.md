@@ -53,6 +53,9 @@ example:
 
 ```dotenv
 JERRYSCAN_MODEL_FOLDER=models/Patchcore_rembg_u2net_black_v1_256_c10_seed42
+JERRYSCAN_GPU_MODEL_COUNT=0
+JERRYSCAN_CPU_INFERENCE_CONCURRENCY=1
+JERRYSCAN_GPU_INFERENCE_CONCURRENCY=1
 ```
 
 Then run these commands from the repository root:
@@ -62,19 +65,36 @@ uv sync --extra preprocess-rembg
 uv run uvicorn backend.main:app --reload
 ```
 
-Upload one original camera image for every angle declared by the selected
-folder. Do not manually preprocess them; the selected folder's shared pipeline
-runs automatically before the matching angle checkpoint. The current contracts
+Upload original camera images for any non-empty subset of currently available
+angles. The backend reports both configured and available angles through
+`/health`; a missing, corrupt, incompatible, or failed angle is listed
+separately and an upload for it is rejected explicitly. Angles omitted from a
+batch are not inspected, do not affect its overall decision, and are not stored
+in that history session. Do not manually preprocess images; the
+selected folder's shared pipeline runs automatically before the matching angle checkpoint. The current contracts
 expect original 1025 x 1281 camera dimensions. Any other size, including a
 1024 x 1024 derivative, correctly returns `WRONG_INPUT` before preprocessing.
-Multi-angle batch requests run distinct PatchCore engines concurrently after a
-single-flight shared preprocessing stage. This favors inspection latency on a
-machine with sufficient CPU/GPU and memory; requests for the same angle remain
-serialized through that angle's engine.
+Device placement is deliberately opt-in. `JERRYSCAN_GPU_MODEL_COUNT=0` keeps
+all loaded angles on CPU and is the Docker/VM default. A positive count assigns
+that many usable angle models to CUDA in `model.json` order, skipping angles
+whose artifacts are unavailable; all remaining models stay on CPU. Use `1` on
+a 6 GB GTX 1660 Super. A requested CUDA model falls back individually to CPU if
+CUDA is unavailable or initialization fails. Requested devices, actual devices,
+and fallback reasons are visible at `/health`.
+
+U2Net preprocessing stays on CPU and is single-flight. CPU and GPU PatchCore
+inference each default to one operation at a time. The corresponding
+`JERRYSCAN_CPU_INFERENCE_CONCURRENCY` and
+`JERRYSCAN_GPU_INFERENCE_CONCURRENCY` values should only be raised after
+measuring memory use and latency on the target machine.
 
 The backend checks each local checkpoint and rembg weight against the expected
-SHA-256 and byte size in `model.json` before Torch or ONNX loads it. A partial,
-wrong, or corrupted copy leaves the model not ready instead of running it.
+SHA-256 and byte size in `model.json` before Torch or ONNX loads it. Schema-1.1
+angle artifacts are fail-closed independently: usable siblings remain
+available, and the failed angle receives a structured reason without borrowing
+another angle's checkpoint. The service is not ready only when no angle loads
+or the shared preprocessing artifact/runtime fails. Partial coverage is marked
+`degraded` and is not reported as ready for full production decisions.
 
 Each angle declares its own threshold on `raw_patchcore_image_score`; thresholds
 are never inferred from another checkpoint. G01's U2Net-black value of 34 is a

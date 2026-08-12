@@ -19,7 +19,6 @@ npm-debug.log*
 
 # Datasets and generated files
 test_dataset
-test_images
 cli_predictions
 model_lab
 
