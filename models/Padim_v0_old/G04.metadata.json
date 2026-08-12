@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0",
+  "created_at_utc": "2026-08-08T20:14:27.102281+00:00",
+  "model": {
+    "class": "Patchcore",
+    "angle": "G04",
+    "model_set": "Patchcore_rembg_u2net_black_v1_256_c10_seed42",
+    "backbone": "wide_resnet50_2",
+    "layers": [
+      "layer2",
+      "layer3"
+    ],
+    "image_size": 256,
+    "coreset_sampling_ratio": 0.1,
+    "num_neighbors": 9,
+    "implementation": "CpuOffloadPatchcore"
+  },
+  "dataset": {
+    "root": "/tf/Jerryscan-data/G04/rembg_u2net_black_v1",
+    "manifest": "/tf/JerryscanAI/data_manifests/G04/split_v2.csv",
+    "manifest_sha256": "87986f00f51428879d07d82ffa91d7819c773ac35eb9244c28d3e509e8e77c77",
+    "preprocessing_id": "rembg_u2net_black_v1",
+    "counts": {
+      "train": 2001,
+      "val": 985,
+      "test": 1000
+    },
+    "test_used_during_training": false
+  },
+  "training": {
+    "seed": 42,
+    "batch_size": 8,
+    "eval_batch_size": 1,
+    "num_workers": 4,
+    "accelerator": "gpu",
+    "embedding_storage": "cpu",
+    "fit_seconds": 1625.827191259712,
+    "peak_process_rss_bytes": 26636976128,
+    "peak_cuda_allocated_bytes": 18611504128,
+    "peak_cuda_reserved_bytes": 18637389824
+  },
+  "hardware": {
+    "platform": "Linux-6.8.0-100-generic-x86_64-with-glibc2.35",
+    "machine": "x86_64",
+    "cpu_count": 256,
+    "system_memory_bytes": 1623051321344,
+    "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "gpu_total_memory_bytes": 21554811371,
+    "cuda_runtime": "13.0"
+  },
+  "software": {
+    "python": "3.11.15 (main, Mar  3 2026, 09:26:23) [GCC 11.4.0]",
+    "anomalib": "2.2.0",
+    "lightning": "2.6.1",
+    "torch": "2.13.0"
+  },
+  "git": {
+    "commit": "1bddd8c7dad30b3c823c93cf488352fea8ac8cc6",
+    "dirty": true
+  },
+  "command": [
+    "/tf/JerryscanAI/training/models/train_patchcore.py",
+    "--dataset-root",
+    "/tf/Jerryscan-data/G04/rembg_u2net_black_v1",
+    "--manifest",
+    "/tf/JerryscanAI/data_manifests/G04/split_v2.csv",
+    "--angle",
+    "G04",
+    "--preprocessing-id",
+    "rembg_u2net_black_v1",
+    "--model-set",
+    "Patchcore_rembg_u2net_black_v1_256_c10_seed42",
+    "--image-size",
+    "256",
+    "--batch-size",
+    "8",
+    "--eval-batch-size",
+    "1",
+    "--num-workers",
+    "4",
+    "--accelerator",
+    "gpu",
+    "--coreset-sampling-ratio",
+    "0.1",
+    "--num-neighbors",
+    "9",
+    "--embedding-storage",
+    "cpu",
+    "--seed",
+    "42",
+    "--models-dir",
+    "/tf/jerryscanai-training-output/models",
+    "--results-dir",
+    "/tf/jerryscanai-training-output/results"
+  ],
+  "checkpoint": "/tf/jerryscanai-training-output/models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G04.ckpt",
+  "checkpoint_artifact": {
+    "sha256": "88d7c72e469fd4ddafd8f3449de797156a22fc7c0882c4600b27e86042d5a12c",
+    "size_bytes": 1358740531
+  }
+}

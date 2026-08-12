@@ -148,7 +148,7 @@
     align-items: center;
 }
 
-.btn-simulation {
+.btn-report-close {
     background: #334155;
     color: #f1f5f9;
     border: 1px solid #475569;
@@ -163,12 +163,12 @@
     transition: all 0.2s;
 }
 
-.btn-simulation:hover:not(:disabled) {
+.btn-report-close:hover:not(:disabled) {
     background: #1e293b;
     border-color: var(--primary-color);
 }
 
-.btn-simulation:disabled {
+.btn-report-close:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }

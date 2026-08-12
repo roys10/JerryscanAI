@@ -28,13 +28,14 @@ Frontend dependencies are installed separately in their respective application d
 
 ## Manufacturing application
 
-The current manufacturing runtime is intentionally simple and G01-only. You
-choose one model by pointing the backend at its folder. For every original
-camera image, the backend runs that folder's preprocessing and PatchCore
-checkpoint, then returns the raw anomaly score, a fixed-scale heatmap, a red
-defect-location contour, and the preprocessing mask as separate UI views.
-The original G01 contract is exactly 1025 x 1281 pixels; resized or already
-preprocessed images are rejected before preprocessing.
+The manufacturing runtime uses one explicitly selected model-set folder. A
+folder can declare one camera (schema 1.0) or multiple cameras (schema 1.1).
+For every original camera image, the backend runs the folder's shared
+preprocessing and the checkpoint declared for that angle, then returns the raw
+anomaly score, a fixed-scale heatmap, a red defect-location contour, and the
+preprocessing mask, when the selected pipeline produces one, as separate UI
+views. The current camera contract is exactly 1025 x 1281 pixels; resized or
+already preprocessed images are rejected before preprocessing.
 
 Each usable folder has this shape:
 
@@ -42,8 +43,8 @@ Each usable folder has this shape:
 models/Patchcore_<preprocessing>_256_c10_seed42/
 |-- model.json             # tracked runtime and preprocessing contract
 |-- README.md              # tracked setup note
-|-- G01.metadata.json      # tracked training/reproducibility record
-|-- G01.ckpt               # supplied locally; ignored by Git
+|-- G01.metadata.json ... G04.metadata.json  # tracked training records
+|-- G01.ckpt ... G04.ckpt                    # local; ignored by Git
 ```
 
 The stable `model.id` remains tied to the folder and training metadata, while
@@ -51,27 +52,61 @@ the optional `model.display_name` in `model.json` controls the name shown to
 operators. Changing the display name does not require renaming the folder.
 
 Each current folder already includes its matching metadata; normally you add
-only that run's `G01.ckpt`. The rembg folders also need `u2net.onnx`. They first look beside `model.json`,
+the checkpoints declared in `model.json`. Multi-angle files sit beside one
+another in the same model-set folder. The rembg folders also need one shared
+`u2net.onnx`. They first look beside `model.json`,
 which makes the folder portable, then fall back to the shared
 `models/preprocessing/rembg/u2net.onnx` copy.
 
-In PowerShell, select a folder and start the API:
+Copy `backend/.env.example` to `backend/.env`, then select the model folder with
+the `JERRYSCAN_MODEL_FOLDER` environment variable:
 
-```powershell
-$env:JERRYSCAN_MODEL_FOLDER = (Resolve-Path "models/Patchcore_rembg_u2net_black_v1_256_c10_seed42")
+```dotenv
+JERRYSCAN_MODEL_FOLDER=models/Patchcore_rembg_u2net_black_v1_256_c10_seed42
+JERRYSCAN_GPU_MODEL_COUNT=0
+JERRYSCAN_CPU_INFERENCE_CONCURRENCY=1
+JERRYSCAN_GPU_INFERENCE_CONCURRENCY=1
+```
+
+From the repository root, install the rembg dependency used by this example and
+start the API:
+
+```console
 uv sync --extra preprocess-rembg
 uv run uvicorn backend.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/health`. A complete folder reports
-`ready`; a missing or mismatched model artifact is reported by `/health` and
-inspection requests return HTTP 503 rather than an inspection result.
-PatchCore inference prefers CUDA automatically. If CUDA is unavailable or the
-checkpoint cannot load and warm up on the GPU, startup retries on CPU. The
-selected `inference_device` and any `device_fallback_reason` are reported by
-`/health`.
-On startup, the backend verifies the checkpoint and any U2Net weight against
+Open `http://127.0.0.1:8000/health`. A complete folder reports `ready`. A
+schema-1.1 folder with at least one usable angle reports `degraded`, lists its
+`configured_angles`, `available_angles`, and structured `unavailable_angles`,
+and accepts any non-empty subset of the available angles. Only uploaded angles
+contribute to the batch decision and history record. An unavailable
+single-angle request returns HTTP 503; no checkpoint is ever substituted for
+another angle. The service is `not_ready` only when no angle can load or the
+shared preprocessing contract cannot load. `ready_for_decisions` remains false
+while production camera coverage is partial.
+
+PatchCore is CPU-only by default (`JERRYSCAN_GPU_MODEL_COUNT=0`), including in
+the normal Docker/VM deployment. On a native installation with a CUDA-enabled
+PyTorch build, set the count to the number of angle models to place on the GPU.
+Assignment follows the angle order in `model.json`, skips unavailable angle
+artifacts, and puts every remaining loaded angle on CPU. Use `1` for the 6 GB
+GTX 1660 Super; increase it on a larger GPU only after measuring VRAM use. If
+CUDA is unavailable or a selected checkpoint cannot initialize there, that
+angle falls back to CPU without disabling its usable siblings. `/health`
+reports requested and actual devices plus per-angle fallback reasons.
+
+Shared U2Net preprocessing remains CPU and single-flight. PatchCore inference
+is also serialized per device by default. In particular,
+`JERRYSCAN_CPU_INFERENCE_CONCURRENCY=1` avoids the severe RAM-bandwidth
+oversubscription observed when several large memory-bank searches run at once.
+`JERRYSCAN_GPU_INFERENCE_CONCURRENCY` also defaults to `1`; raise either value
+only after measuring the target machine. These settings change scheduling and
+placement, not scores or decisions.
+On startup, the backend verifies every declared checkpoint and any U2Net weight against
 the SHA-256 and byte size recorded in `model.json` before either model is loaded.
+Angle checkpoints are validated and initialized independently; the shared
+preprocessing weight remains a bundle-wide requirement.
 
 Start the frontend in another terminal:
 
@@ -81,12 +116,12 @@ npm install
 npm run dev
 ```
 
-Each model's `model.json` contains its own provisional raw-score threshold:
-raw letterbox 35, fixed crop 36, and both U2Net variants 34. Each value is the
-rounded ceiling above that model's maximum score on the 994 normal `split_v2`
-validation images, producing zero observed validation false positives. These
-are not percentages, and real labeled faults are still required to validate
-defect recall. Invalid images or failed input preprocessing return
+Each angle in `model.json` contains its own raw-score threshold. G01's current
+thresholds came from its normal validation set. The multi-angle U2Net-black
+contract explicitly marks G02-G04's current value of 34 as a temporary,
+uncalibrated operator default; those values require angle-specific validation.
+Raw thresholds are not percentages, and real labeled faults are still required
+to validate defect recall. Invalid images or failed input preprocessing return
 `WRONG_INPUT`; model/runtime failures are HTTP errors and are not recorded as
 defective cans.
 
@@ -116,14 +151,14 @@ and alert rules there. Keep the SMTP password out of JSON and provide it only
 through the `SMTP_PASSWORD` environment variable. Docker overrides the config
 path so container settings persist under `runtime-data/`.
 
-The original `.github/workflows/deploy.yml` workflow is retained. A push to
-`backend-CD` builds `ghcr.io/roys10/jerryscanai:latest`, copies Compose to the
-configured remote server, creates `backend/.env` from the `SMTP_USER` and
-`SMTP_PASSWORD` GitHub secrets plus the selected container model path, and
-restarts the backend. It does not run the local
-test suite. Because checkpoints and ONNX weights are ignored by Git, the
-selected model folder and its large artifacts must already exist in the remote
-server's `~/jerryscanai/models` directory.
+A push to `backend-CD` triggers `.github/workflows/deploy.yml`. The workflow
+builds `ghcr.io/roys10/jerryscanai:latest`, copies Compose to the configured
+remote server, creates `backend/.env` from the `SMTP_USER` and `SMTP_PASSWORD`
+GitHub secrets, sets `JERRYSCAN_MODEL_FOLDER` to the deployed U2Net-black
+model-set path, and restarts the backend. It does not run the local test suite.
+Because checkpoints and ONNX weights are ignored by Git, the selected model
+folder and its large artifacts must already exist in the remote server's
+`~/jerryscanai/models` directory.
 
 ## Model Lab
 

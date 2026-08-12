@@ -1,4 +1,4 @@
-"""Small, fail-closed runtime for one local PatchCore model folder.
+"""Small, fail-closed runtime for one local multi-angle PatchCore model folder.
 
 The folder is the deployment unit for the current project.  It contains a
 human-readable ``model.json`` contract and the user supplies the large model
@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import gc
+import inspect
 import io
 import json
 import logging
@@ -33,8 +35,43 @@ SUPPORTED_BACKENDS = {"raw_letterbox", "fixed_crop", "rembg"}
 LOGGER = logging.getLogger(__name__)
 
 
+def _environment_integer(name: str, default: int, *, minimum: int) -> int:
+    """Read a bounded integer runtime option with a useful startup error."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ModelFolderError(f"{name} must be an integer, received {raw!r}") from exc
+    if value < minimum:
+        qualifier = "zero or greater" if minimum == 0 else f"at least {minimum}"
+        raise ModelFolderError(f"{name} must be {qualifier}, received {value}")
+    return value
+
+
 class ModelFolderError(RuntimeError):
     """The selected local model folder is incomplete or inconsistent."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        configured_angles: tuple[str, ...] = (),
+        unavailable_angles: dict[str, dict[str, str]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.configured_angles = configured_angles
+        self.unavailable_angles = dict(unavailable_angles or {})
+
+
+def _angle_unavailable(stage: str, exc: BaseException) -> dict[str, str]:
+    """Return a stable, JSON-safe explanation for one unavailable angle."""
+    return {
+        "stage": stage,
+        "error_type": type(exc).__name__,
+        "detail": str(exc),
+    }
 
 
 class InspectionInputError(RuntimeError):
@@ -135,28 +172,94 @@ def _verify_artifact(path: Path, expected_sha256: str, expected_size: int, label
 
 
 @dataclass(frozen=True)
+class AngleModelArtifact:
+    """One camera angle's checkpoint, metadata, and decision contract."""
+
+    angle: str
+    checkpoint: Path
+    checkpoint_sha256: str
+    checkpoint_size_bytes: int
+    metadata: Path
+    decision_threshold: float
+    threshold_provenance: str
+
+
+def _decision_threshold(contract: Any, label: str) -> tuple[float, str]:
+    if not isinstance(contract, dict):
+        raise ModelFolderError(f"{label} must be an object")
+    if contract.get("score") != "raw_patchcore_image_score":
+        raise ModelFolderError(f"{label}.score must be 'raw_patchcore_image_score'")
+    if contract.get("rule") != "fail_if_score_greater_than_or_equal":
+        raise ModelFolderError(
+            f"{label}.rule must be 'fail_if_score_greater_than_or_equal'"
+        )
+    value = contract.get("value")
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(float(value))
+        or float(value) <= 0
+    ):
+        raise ModelFolderError(f"{label}.value must be a positive finite number")
+    provenance = contract.get("provenance", "unspecified")
+    if not isinstance(provenance, str) or not provenance.strip():
+        raise ModelFolderError(f"{label}.provenance must be a non-empty string")
+    return float(value), provenance.strip()
+
+
+@dataclass(frozen=True)
 class LocalModelManifest:
-    """Validated, resolved contract for one local model directory."""
+    """Validated, resolved contract for one local model-set directory."""
 
     folder: Path
     model_id: str
     display_name: str
     family: str
-    angle: str
     image_size: int
     original_width: int
     original_height: int
-    checkpoint: Path
-    checkpoint_sha256: str
-    checkpoint_size_bytes: int
-    metadata: Path
+    configured_angles: tuple[str, ...]
+    angles: dict[str, AngleModelArtifact]
+    unavailable_angles: dict[str, dict[str, str]]
     preprocessing_id: str
     preprocessing_config: dict[str, Any]
     preprocessing_weight: Path | None
     preprocessing_weight_sha256: str | None
     preprocessing_weight_size_bytes: int | None
-    decision_threshold: float
     max_image_bytes: int
+
+    @property
+    def required_angles(self) -> tuple[str, ...]:
+        return tuple(self.angles)
+
+    # Compatibility properties for existing schema-1.0 single-angle folders.
+    @property
+    def primary_angle(self) -> AngleModelArtifact:
+        return next(iter(self.angles.values()))
+
+    @property
+    def angle(self) -> str:
+        return self.primary_angle.angle
+
+    @property
+    def checkpoint(self) -> Path:
+        return self.primary_angle.checkpoint
+
+    @property
+    def checkpoint_sha256(self) -> str:
+        return self.primary_angle.checkpoint_sha256
+
+    @property
+    def checkpoint_size_bytes(self) -> int:
+        return self.primary_angle.checkpoint_size_bytes
+
+    @property
+    def metadata(self) -> Path:
+        return self.primary_angle.metadata
+
+    @property
+    def decision_threshold(self) -> float:
+        return self.primary_angle.decision_threshold
 
     @classmethod
     def load(
@@ -167,15 +270,15 @@ class LocalModelManifest:
             raise ModelFolderError(f"Selected model folder does not exist: {selected}")
 
         document = _json_object(selected / MANIFEST_FILENAME, "model manifest")
-        if document.get("schema_version") != "1.0":
-            raise ModelFolderError("model.json schema_version must be '1.0'")
+        schema_version = document.get("schema_version")
+        if schema_version not in {"1.0", "1.1"}:
+            raise ModelFolderError("model.json schema_version must be '1.0' or '1.1'")
 
         model = document.get("model")
         input_contract = document.get("input")
-        artifacts = document.get("artifacts")
         preprocessing = document.get("preprocessing")
-        if not isinstance(model, dict) or not isinstance(artifacts, dict):
-            raise ModelFolderError("model.json requires object fields 'model' and 'artifacts'")
+        if not isinstance(model, dict):
+            raise ModelFolderError("model.json requires an object field 'model'")
         if not isinstance(input_contract, dict):
             raise ModelFolderError("model.json requires an object field 'input'")
         if not isinstance(preprocessing, dict):
@@ -187,7 +290,6 @@ class LocalModelManifest:
             raise ModelFolderError("model.display_name must be a non-empty string")
         display_name = display_name_value.strip()
         family = str(model.get("family", "")).casefold()
-        angle = str(model.get("angle", ""))
         image_size = model.get("image_size")
         if model_id != selected.name:
             raise ModelFolderError(
@@ -195,19 +297,89 @@ class LocalModelManifest:
             )
         if family != "patchcore":
             raise ModelFolderError("Only PatchCore model folders are currently supported")
-        if angle != "G01":
-            raise ModelFolderError("The current manufacturing runtime supports only angle G01")
         if not isinstance(image_size, int) or isinstance(image_size, bool) or image_size <= 0:
             raise ModelFolderError("model.image_size must be a positive integer")
 
         original_width = _positive_integer(input_contract.get("width"), "input.width")
         original_height = _positive_integer(input_contract.get("height"), "input.height")
 
-        checkpoint_file, checkpoint_sha256, checkpoint_size = _artifact_identity(
-            artifacts.get("checkpoint"), "artifacts.checkpoint"
-        )
-        checkpoint = _direct_child(selected, checkpoint_file, "artifacts.checkpoint.file")
-        metadata = _direct_child(selected, artifacts.get("metadata"), "artifacts.metadata")
+        unavailable_angles: dict[str, dict[str, str]] = {}
+        if schema_version == "1.0":
+            artifacts = document.get("artifacts")
+            angle = str(model.get("angle", ""))
+            if not isinstance(artifacts, dict) or not angle:
+                raise ModelFolderError(
+                    "schema-1.0 model.json requires model.angle and object artifacts"
+                )
+            threshold, provenance = _decision_threshold(
+                document.get("decision_threshold"), "decision_threshold"
+            )
+            checkpoint_file, checkpoint_sha256, checkpoint_size = _artifact_identity(
+                artifacts.get("checkpoint"), "artifacts.checkpoint"
+            )
+            angles = {
+                angle: AngleModelArtifact(
+                    angle=angle,
+                    checkpoint=_direct_child(
+                        selected, checkpoint_file, "artifacts.checkpoint.file"
+                    ),
+                    checkpoint_sha256=checkpoint_sha256,
+                    checkpoint_size_bytes=checkpoint_size,
+                    metadata=_direct_child(
+                        selected, artifacts.get("metadata"), "artifacts.metadata"
+                    ),
+                    decision_threshold=threshold,
+                    threshold_provenance=provenance,
+                )
+            }
+            configured_angles = (angle,)
+        else:
+            if model.get("angle") is not None or document.get("artifacts") is not None:
+                raise ModelFolderError(
+                    "schema-1.1 stores angle-specific artifacts under the angles object"
+                )
+            angle_contracts = document.get("angles")
+            if not isinstance(angle_contracts, dict) or not angle_contracts:
+                raise ModelFolderError("schema-1.1 model.json requires a non-empty angles object")
+            configured_angles = tuple(angle_contracts)
+            angles = {}
+            for angle, angle_contract in angle_contracts.items():
+                if (
+                    not isinstance(angle, str)
+                    or not angle.startswith("G")
+                    or not angle[1:].isdigit()
+                    or not isinstance(angle_contract, dict)
+                ):
+                    raise ModelFolderError(f"Invalid angle contract: {angle!r}")
+                try:
+                    checkpoint_file, checkpoint_sha256, checkpoint_size = _artifact_identity(
+                        angle_contract.get("checkpoint"), f"angles.{angle}.checkpoint"
+                    )
+                    threshold, provenance = _decision_threshold(
+                        angle_contract.get("decision_threshold"),
+                        f"angles.{angle}.decision_threshold",
+                    )
+                    angles[angle] = AngleModelArtifact(
+                        angle=angle,
+                        checkpoint=_direct_child(
+                            selected,
+                            checkpoint_file,
+                            f"angles.{angle}.checkpoint.file",
+                        ),
+                        checkpoint_sha256=checkpoint_sha256,
+                        checkpoint_size_bytes=checkpoint_size,
+                        metadata=_direct_child(
+                            selected,
+                            angle_contract.get("metadata"),
+                            f"angles.{angle}.metadata",
+                        ),
+                        decision_threshold=threshold,
+                        threshold_provenance=provenance,
+                    )
+                except ModelFolderError as exc:
+                    unavailable_angles[angle] = _angle_unavailable(
+                        "contract_validation", exc
+                    )
 
         preprocessing_id = str(preprocessing.get("id", ""))
         config = preprocessing.get("config")
@@ -221,9 +393,19 @@ class LocalModelManifest:
             raise ModelFolderError(f"Unsupported preprocessing backend: {backend or '<missing>'}")
         _positive_size(config.get("output_size"), "preprocessing.config.output_size")
 
-        weight = cls._resolve_preprocessing_weight(
-            selected, preprocessing, backend, require_artifacts=require_artifacts
-        )
+        try:
+            weight = cls._resolve_preprocessing_weight(
+                selected, preprocessing, backend, require_artifacts=require_artifacts
+            )
+        except ModelFolderError as exc:
+            raise ModelFolderError(
+                str(exc),
+                configured_angles=configured_angles,
+                unavailable_angles={
+                    angle: _angle_unavailable("shared_preprocessing_artifact", exc)
+                    for angle in configured_angles
+                },
+            ) from exc
         weight_sha256: str | None = None
         weight_size: int | None = None
         if weight is not None:
@@ -232,29 +414,6 @@ class LocalModelManifest:
             )
             config["model_dir"] = str(weight.parent)
             config["model_filename"] = weight.name
-
-        threshold_contract = document.get("decision_threshold")
-        if not isinstance(threshold_contract, dict):
-            raise ModelFolderError("decision_threshold must be an object")
-        if threshold_contract.get("score") != "raw_patchcore_image_score":
-            raise ModelFolderError(
-                "decision_threshold.score must be 'raw_patchcore_image_score'"
-            )
-        if threshold_contract.get("rule") != "fail_if_score_greater_than_or_equal":
-            raise ModelFolderError(
-                "decision_threshold.rule must be 'fail_if_score_greater_than_or_equal'"
-            )
-        threshold_value = threshold_contract.get("value")
-        if (
-            not isinstance(threshold_value, (int, float))
-            or isinstance(threshold_value, bool)
-            or not math.isfinite(float(threshold_value))
-            or float(threshold_value) <= 0
-        ):
-            raise ModelFolderError(
-                "decision_threshold.value must be a positive finite number"
-            )
-        threshold = float(threshold_value)
 
         max_bytes = document.get("max_image_bytes", 25 * 1024 * 1024)
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
@@ -265,24 +424,33 @@ class LocalModelManifest:
             model_id=model_id,
             display_name=display_name,
             family=family,
-            angle=angle,
             image_size=image_size,
             original_width=original_width,
             original_height=original_height,
-            checkpoint=checkpoint,
-            checkpoint_sha256=checkpoint_sha256,
-            checkpoint_size_bytes=checkpoint_size,
-            metadata=metadata,
+            configured_angles=configured_angles,
+            angles=angles,
+            unavailable_angles=unavailable_angles,
             preprocessing_id=preprocessing_id,
             preprocessing_config=config,
             preprocessing_weight=weight,
             preprocessing_weight_sha256=weight_sha256,
             preprocessing_weight_size_bytes=weight_size,
-            decision_threshold=threshold,
             max_image_bytes=max_bytes,
         )
         if require_artifacts:
-            manifest.validate_artifacts()
+            if schema_version == "1.0":
+                # Retain the strict behavior of existing single-angle bundles.
+                manifest.validate_artifacts()
+            else:
+                manifest.validate_shared_artifacts()
+                for angle, angle_artifact in tuple(manifest.angles.items()):
+                    try:
+                        manifest.validate_angle_artifacts(angle_artifact)
+                    except ModelFolderError as exc:
+                        manifest.unavailable_angles[angle] = _angle_unavailable(
+                            "artifact_validation", exc
+                        )
+                        manifest.angles.pop(angle)
         return manifest
 
     @staticmethod
@@ -325,12 +493,12 @@ class LocalModelManifest:
         return shared
 
     def validate_artifacts(self) -> None:
-        _verify_artifact(
-            self.checkpoint,
-            self.checkpoint_sha256,
-            self.checkpoint_size_bytes,
-            "PatchCore checkpoint",
-        )
+        self.validate_shared_artifacts()
+        for angle_artifact in self.angles.values():
+            self.validate_angle_artifacts(angle_artifact)
+
+    def validate_shared_artifacts(self) -> None:
+        """Validate artifacts shared by every configured camera angle."""
         if self.preprocessing_weight is not None:
             assert self.preprocessing_weight_sha256 is not None
             assert self.preprocessing_weight_size_bytes is not None
@@ -340,10 +508,22 @@ class LocalModelManifest:
                 self.preprocessing_weight_size_bytes,
                 "preprocessing weight",
             )
-        if not self.metadata.is_file() or self.metadata.stat().st_size <= 0:
-            raise ModelFolderError(f"Missing or empty metadata: {self.metadata}")
 
-        metadata = _json_object(self.metadata, "training metadata")
+    def validate_angle_artifacts(self, angle_artifact: AngleModelArtifact) -> None:
+        """Validate one angle without making sibling angles unusable."""
+        _verify_artifact(
+            angle_artifact.checkpoint,
+            angle_artifact.checkpoint_sha256,
+            angle_artifact.checkpoint_size_bytes,
+            f"{angle_artifact.angle} PatchCore checkpoint",
+        )
+        self._validate_angle_metadata(angle_artifact)
+
+    def _validate_angle_metadata(self, angle_artifact: AngleModelArtifact) -> None:
+        if not angle_artifact.metadata.is_file() or angle_artifact.metadata.stat().st_size <= 0:
+            raise ModelFolderError(f"Missing or empty metadata: {angle_artifact.metadata}")
+
+        metadata = _json_object(angle_artifact.metadata, "training metadata")
         model = metadata.get("model")
         dataset = metadata.get("dataset")
         if not isinstance(model, dict) or not isinstance(dataset, dict):
@@ -351,7 +531,7 @@ class LocalModelManifest:
         if str(model.get("class", "")).casefold() != "patchcore":
             raise ModelFolderError("Training metadata is not for PatchCore")
         expected = {
-            "model.angle": (model.get("angle"), self.angle),
+            "model.angle": (model.get("angle"), angle_artifact.angle),
             "model.model_set": (model.get("model_set"), self.model_id),
             "model.image_size": (model.get("image_size"), self.image_size),
             "dataset.preprocessing_id": (
@@ -373,8 +553,8 @@ class LocalModelManifest:
             metadata_sha256 = str(binding.get("sha256", "")).lower()
             metadata_size = binding.get("size_bytes")
             if (
-                metadata_sha256 != self.checkpoint_sha256
-                or metadata_size != self.checkpoint_size_bytes
+                metadata_sha256 != angle_artifact.checkpoint_sha256
+                or metadata_size != angle_artifact.checkpoint_size_bytes
             ):
                 raise ModelFolderError(
                     "Training metadata checkpoint_artifact differs from authoritative model.json"
@@ -384,7 +564,7 @@ class LocalModelManifest:
 class RawPatchCoreEngine:
     """Load one checkpoint and expose its raw image score and anomaly map."""
 
-    def __init__(self, checkpoint: Path) -> None:
+    def __init__(self, checkpoint: Path, *, preferred_device: str = "cpu") -> None:
         import anomalib
         import torch
         from anomalib.models import Patchcore
@@ -396,7 +576,52 @@ class RawPatchCoreEngine:
         self.v2 = v2
         self.model = None
         self.device_fallback_reason: str | None = None
-        self._load_on_preferred_device(checkpoint, Patchcore)
+        if preferred_device not in {"cpu", "cuda"}:
+            raise ValueError("preferred_device must be 'cpu' or 'cuda'")
+        self.requested_device = preferred_device
+        self._load_on_preferred_device(checkpoint, Patchcore, preferred_device)
+
+    @staticmethod
+    def _normalize_transform_interpolation(transform: Any, interpolation_mode: Any) -> int:
+        """Repair string interpolation values saved by newer Torchvision builds.
+
+        Some G02-G04 checkpoints were produced with a Torch/Torchvision build
+        that serialized ``Resize.interpolation`` as ``"bilinear"``.  Older
+        supported runtimes require the equivalent ``InterpolationMode`` enum.
+        Converting the representation preserves the trained resize operation;
+        it does not alter model weights, inputs, scores, or thresholds.
+        """
+        modes = {
+            str(mode.value).casefold(): mode
+            for mode in interpolation_mode
+        }
+        modes.update({mode.name.casefold(): mode for mode in interpolation_mode})
+        converted = 0
+        pending = [transform]
+        visited: set[int] = set()
+        while pending:
+            module = pending.pop()
+            identity = id(module)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            value = getattr(module, "interpolation", None)
+            if isinstance(value, str):
+                replacement = modes.get(value.casefold())
+                if replacement is not None:
+                    module.interpolation = replacement
+                    converted += 1
+
+            # Torchvision v2 Compose keeps its children in a plain list rather
+            # than registering them as torch modules, while other containers
+            # use ``_modules``. Traverse both representations.
+            children = getattr(module, "transforms", ())
+            if isinstance(children, (list, tuple)):
+                pending.extend(children)
+            registered = getattr(module, "_modules", None)
+            if isinstance(registered, dict):
+                pending.extend(registered.values())
+        return converted
 
     def _initialize_on_device(self, checkpoint: Path, patchcore_class: Any, device: Any) -> None:
         """Load and warm up the checkpoint on one concrete Torch device."""
@@ -412,6 +637,17 @@ class RawPatchCoreEngine:
         ).to(device).eval()
         if not self.model.pre_processor or not self.model.pre_processor.transform:
             raise RuntimeError("PatchCore checkpoint lacks its training preprocessor")
+        from torchvision.transforms import InterpolationMode
+
+        converted = self._normalize_transform_interpolation(
+            self.model.pre_processor.transform,
+            InterpolationMode,
+        )
+        if converted:
+            LOGGER.info(
+                "Normalized %d checkpoint interpolation value(s) for Torchvision compatibility",
+                converted,
+            )
         self.pixel_display_bounds = self._pixel_display_bounds()
         self.transform = self.v2.Compose(
             [
@@ -421,10 +657,18 @@ class RawPatchCoreEngine:
         )
         self.warmup_ms = self._warm_up()
 
-    def _load_on_preferred_device(self, checkpoint: Path, patchcore_class: Any) -> None:
-        """Prefer CUDA, falling back to CPU if CUDA initialization is unusable."""
+    def _load_on_preferred_device(
+        self, checkpoint: Path, patchcore_class: Any, preferred_device: str = "cpu"
+    ) -> None:
+        """Load on the requested device, with a fail-safe CUDA-to-CPU fallback."""
         cpu = self.torch.device("cpu")
+        if preferred_device == "cpu":
+            self._initialize_on_device(checkpoint, patchcore_class, cpu)
+            return
+
         if not self.torch.cuda.is_available():
+            self.device_fallback_reason = "CUDA was requested but is not available"
+            LOGGER.warning("%s; falling back to CPU", self.device_fallback_reason)
             self._initialize_on_device(checkpoint, patchcore_class, cpu)
             return
 
@@ -669,35 +913,159 @@ def _quality_score_percentage(raw_score: float, raw_threshold: float) -> float:
 
 
 class LocalPatchCoreRuntime:
-    """Reusable preprocessing and PatchCore inference for one selected folder."""
+    """Reusable shared preprocessing plus one PatchCore engine per angle."""
 
     def __init__(
         self,
         manifest: LocalModelManifest,
         *,
-        engine_factory: Callable[[Path], Any] = RawPatchCoreEngine,
+        engine_factory: Callable[..., Any] = RawPatchCoreEngine,
         preprocessor_factory: Callable[[dict[str, Any]], Any] = create_backend,
+        gpu_model_count: int | None = None,
+        cpu_inference_concurrency: int | None = None,
+        gpu_inference_concurrency: int | None = None,
     ) -> None:
         self.manifest = manifest
         self.model_id = manifest.model_id
         self.model_display_name = manifest.display_name
-        self.angle = manifest.angle
+        self.configured_angles = manifest.configured_angles
         self.preprocessing_id = manifest.preprocessing_id
+        self.engines: dict[str, Any] = {}
+        self.unavailable_angles = dict(manifest.unavailable_angles)
+        self.gpu_model_count = (
+            _environment_integer("JERRYSCAN_GPU_MODEL_COUNT", 0, minimum=0)
+            if gpu_model_count is None
+            else gpu_model_count
+        )
+        self.cpu_inference_concurrency = (
+            _environment_integer(
+                "JERRYSCAN_CPU_INFERENCE_CONCURRENCY", 1, minimum=1
+            )
+            if cpu_inference_concurrency is None
+            else cpu_inference_concurrency
+        )
+        self.gpu_inference_concurrency = (
+            _environment_integer(
+                "JERRYSCAN_GPU_INFERENCE_CONCURRENCY", 1, minimum=1
+            )
+            if gpu_inference_concurrency is None
+            else gpu_inference_concurrency
+        )
+        for name, value, minimum in (
+            ("gpu_model_count", self.gpu_model_count, 0),
+            ("cpu_inference_concurrency", self.cpu_inference_concurrency, 1),
+            ("gpu_inference_concurrency", self.gpu_inference_concurrency, 1),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                raise ModelFolderError(
+                    f"{name} must be an integer "
+                    + ("zero or greater" if minimum == 0 else f"at least {minimum}")
+                )
+        self.requested_inference_devices: dict[str, str] = {}
         try:
             self.preprocessor = preprocessor_factory(manifest.preprocessing_config)
-            self.engine = engine_factory(manifest.checkpoint)
         except Exception as exc:
-            raise ModelFolderError(f"Could not load selected model folder: {exc}") from exc
-        self.inference_device = str(getattr(self.engine, "device", "unknown"))
-        self.device_fallback_reason = getattr(
-            self.engine, "device_fallback_reason", None
+            raise ModelFolderError(
+                f"Could not load shared preprocessing: {exc}",
+                configured_angles=self.configured_angles,
+                unavailable_angles={
+                    angle: _angle_unavailable("shared_preprocessing", exc)
+                    for angle in self.configured_angles
+                },
+            ) from exc
+
+        gpu_assignments = 0
+        for angle, artifact in manifest.angles.items():
+            preferred_device = (
+                "cuda" if gpu_assignments < self.gpu_model_count else "cpu"
+            )
+            try:
+                try:
+                    signature = inspect.signature(engine_factory)
+                    signature.bind(artifact.checkpoint, preferred_device=preferred_device)
+                except (TypeError, ValueError):
+                    # Preserve small one-argument test and integration factories.
+                    engine = engine_factory(artifact.checkpoint)
+                else:
+                    engine = engine_factory(
+                        artifact.checkpoint, preferred_device=preferred_device
+                    )
+                self.engines[angle] = engine
+                self.requested_inference_devices[angle] = preferred_device
+                if preferred_device == "cuda":
+                    gpu_assignments += 1
+            except Exception as exc:
+                self.unavailable_angles[angle] = _angle_unavailable(
+                    "engine_initialization", exc
+                )
+                LOGGER.exception("Could not initialize %s PatchCore engine", angle)
+                # Failed constructors can leave large Torch objects waiting for
+                # collection. Release them before attempting the next angle so
+                # one OOM does not automatically prevent every later angle.
+                gc.collect()
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:  # pragma: no cover - cleanup must be best effort
+                    LOGGER.debug("Could not clear accelerator cache", exc_info=True)
+
+        self.available_angles = tuple(self.engines)
+        self.required_angles = self.available_angles
+        if not self.available_angles:
+            close = getattr(self.preprocessor, "close", None)
+            if close:
+                close()
+            details = "; ".join(
+                f"{angle}: {reason['detail']}"
+                for angle, reason in self.unavailable_angles.items()
+            )
+            raise ModelFolderError(
+                "No configured angle could be loaded"
+                + (f" ({details})" if details else ""),
+                configured_angles=self.configured_angles,
+                unavailable_angles=self.unavailable_angles,
+            )
+        self.angle = self.available_angles[0]  # schema-1.0 compatibility
+        self.engine = self.engines[self.angle]  # schema-1.0 compatibility
+        self.inference_devices = {}
+        for angle, engine in self.engines.items():
+            device = getattr(engine, "device", "unknown")
+            self.inference_devices[angle] = str(getattr(device, "type", device))
+        self.device_fallback_reasons = {
+            angle: getattr(engine, "device_fallback_reason", None)
+            for angle, engine in self.engines.items()
+        }
+        unique_devices = set(self.inference_devices.values())
+        self.inference_device = (
+            next(iter(unique_devices)) if len(unique_devices) == 1 else "mixed"
         )
-        self._gate = threading.BoundedSemaphore(1)
+        reasons = [reason for reason in self.device_fallback_reasons.values() if reason]
+        self.device_fallback_reason = "; ".join(reasons) if reasons else None
+        # U2Net stays on CPU and some preprocessing backends keep mutable state.
+        # PatchCore CPU work is single-flight by default: concurrent memory-bank
+        # searches oversubscribe RAM bandwidth and are dramatically slower on
+        # the measured workstation. GPU work is independently bounded.
+        self._preprocessing_gate = threading.BoundedSemaphore(1)
+        self._device_gates = {
+            "cpu": threading.BoundedSemaphore(self.cpu_inference_concurrency),
+            "cuda": threading.BoundedSemaphore(self.gpu_inference_concurrency),
+        }
 
     def _decode(self, image_bytes: bytes, angle: str) -> Image.Image:
-        if angle != self.angle:
+        if angle not in self.engines:
+            reason = self.unavailable_angles.get(angle)
+            if reason is not None:
+                raise InspectionInputError(
+                    "model",
+                    "camera_angle_unavailable",
+                    f"{angle} is configured but unavailable: {reason['detail']}",
+                )
             raise InspectionInputError(
-                "input", "camera_angle_mismatch", f"Selected model accepts {self.angle}, not {angle}"
+                "input",
+                "camera_angle_mismatch",
+                f"Selected model accepts {', '.join(self.available_angles)}, not {angle}",
             )
         if not image_bytes:
             raise InspectionInputError("input", "empty_image", "Camera image is empty")
@@ -715,7 +1083,7 @@ class LocalPatchCoreRuntime:
                         "input",
                         "image_size_mismatch",
                         (
-                            f"Expected original G01 image {expected_size[0]}x{expected_size[1]}, "
+                            f"Expected original {angle} image {expected_size[0]}x{expected_size[1]}, "
                             f"received {opened.width}x{opened.height}. Upload the original camera image."
                         ),
                     )
@@ -728,7 +1096,9 @@ class LocalPatchCoreRuntime:
     def predict(self, image_bytes: bytes, angle: str) -> dict[str, Any]:
         total_started = time.perf_counter()
         image = self._decode(image_bytes, angle)
-        with self._gate:
+        angle_artifact = self.manifest.angles[angle]
+        engine = self.engines[angle]
+        with self._preprocessing_gate:
             try:
                 model_input, mask, metrics = process_single_image(
                     image,
@@ -747,15 +1117,18 @@ class LocalPatchCoreRuntime:
                     "Preprocessing quality checks failed",
                     quality_flags=quality_flags,
                 )
+        device_type = self.inference_devices.get(angle, "cpu")
+        gate = self._device_gates["cuda" if device_type.startswith("cuda") else "cpu"]
+        with gate:
             try:
-                raw_score, anomaly_map, inference_ms = self.engine.predict(model_input)
+                raw_score, anomaly_map, inference_ms = engine.predict(model_input)
             except Exception as exc:
                 raise InferenceRuntimeError(
                     f"PatchCore inference failed: {type(exc).__name__}: {exc}"
                 ) from exc
 
-        display_bounds = getattr(self.engine, "pixel_display_bounds", None)
-        threshold = self.manifest.decision_threshold
+        display_bounds = getattr(engine, "pixel_display_bounds", None)
+        threshold = angle_artifact.decision_threshold
         decision = "FAIL" if raw_score >= threshold else "PASS"
         quality_score_percentage = _quality_score_percentage(raw_score, threshold)
         heatmap_image, defect_overlay_image, display_contract = _display_artifacts(
@@ -770,7 +1143,7 @@ class LocalPatchCoreRuntime:
             "model_id": self.model_id,
             "model_display_name": self.model_display_name,
             "preprocessing_id": self.preprocessing_id,
-            "angle": self.angle,
+            "angle": angle,
             "raw_image_score": raw_score,
             "score": raw_score,
             "quality_score_percentage": quality_score_percentage,
@@ -795,18 +1168,21 @@ class LocalPatchCoreRuntime:
             "model_input_image": _encode_image(model_input),
         }
 
-    def wrong_input_result(self, error: InspectionInputError) -> dict[str, Any]:
+    def wrong_input_result(
+        self, error: InspectionInputError, angle: str | None = None
+    ) -> dict[str, Any]:
+        selected_angle = angle if angle in self.manifest.angles else self.angle
         return {
             "status": "WRONG_INPUT",
             "decision": None,
             "model_id": self.model_id,
             "model_display_name": self.model_display_name,
             "preprocessing_id": self.preprocessing_id,
-            "angle": self.angle,
+            "angle": selected_angle,
             "raw_image_score": None,
             "score": None,
             "quality_score_percentage": None,
-            "image_threshold": self.manifest.decision_threshold,
+            "image_threshold": self.manifest.angles[selected_angle].decision_threshold,
             "quality_failure_boundary_percentage": QUALITY_FAILURE_BOUNDARY_PERCENTAGE,
             "threshold_score": "raw_patchcore_image_score",
             "threshold_rule": "fail_if_score_greater_than_or_equal",
@@ -820,6 +1196,10 @@ class LocalPatchCoreRuntime:
         }
 
     def close(self) -> None:
-        close = getattr(self.engine, "close", None)
+        for engine in self.engines.values():
+            close = getattr(engine, "close", None)
+            if close:
+                close()
+        close = getattr(self.preprocessor, "close", None)
         if close:
             close()
