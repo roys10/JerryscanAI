@@ -195,36 +195,6 @@ function App() {
     }
   };
 
-  const simulateTrigger = async () => {
-    setLoading(true);
-    try {
-      const response = await axios.post(`${BACKEND_BASE_URL}/simulate-trigger`);
-      if (activePage === 'history') {
-        fetchHistory();
-        fetchStats();
-      } else {
-        // Load the simulated results into the console view
-        const simData = {};
-        angles.forEach(a => {
-          if (response.data.angles[a.id]) {
-            simData[a.id] = {
-              result: response.data.angles[a.id],
-              previewUrl: response.data.angles[a.id].original_image
-            };
-          }
-        });
-        setAngleData(simData);
-        setGlobalResult(response.data.overall_status);
-        setViewMode('defect');
-      }
-    } catch (err) {
-      setError("Simulation failed: " + apiErrorDetail(err, 'Request failed'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-
   const handleFileChange = (event) => {
     const file = event.target.files[0];
     processFile(file);
@@ -360,28 +330,18 @@ function App() {
             <Bell size={18} /> System Alerts
           </div>
         </div>
-        <div className="navbar-right" style={{ display: 'flex', alignItems: 'center' }}>
-          <div style={{ width: '1px', height: '24px', background: '#334155', marginRight: '1.5rem' }} />
-          {isArchiveView ? (
+        {isArchiveView && (
+          <div className="navbar-right" style={{ display: 'flex', alignItems: 'center' }}>
+            <div style={{ width: '1px', height: '24px', background: '#334155', marginRight: '1.5rem' }} />
             <button
-              className="btn-simulation"
+              className="btn-report-close"
               onClick={() => { setActivePage('history'); setIsArchiveView(false); setSelectedSession(null); }}
               style={{ background: '#1e293b', borderColor: '#334155' }}
             >
               <XCircle size={16} /> Close Report
             </button>
-          ) : (
-            <button
-              className="btn-simulation"
-              onClick={simulateTrigger}
-              disabled={loading}
-              style={{ marginRight: '-0.5rem' }}
-            >
-              {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-              Simulation Trigger
-            </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </nav>
   );

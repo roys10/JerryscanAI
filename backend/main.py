@@ -276,56 +276,6 @@ async def get_stats() -> dict[str, Any]:
     return history_manager.get_stats()
 
 
-@app.post("/simulate-trigger")
-async def simulate_trigger(model_name: Optional[str] = None) -> dict[str, Any]:
-    test_dir = Path(__file__).resolve().parents[1] / "test_images"
-    try:
-        required_angles, configured_angles, unavailable_angles = _angle_availability()
-    except ModelNotReadyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    paths = {
-        angle: next(
-            (
-                path
-                for suffix in (".bmp", ".png", ".jpg", ".jpeg")
-                if (path := test_dir / f"{angle}{suffix}").is_file()
-            ),
-            None,
-        )
-        for angle in required_angles
-    }
-    missing = [angle for angle, path in paths.items() if path is None]
-    if missing:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Required test images are missing: {', '.join(missing)}",
-        )
-    results = {}
-    for angle, image_path in paths.items():
-        assert image_path is not None
-        try:
-            results[angle] = await run_in_threadpool(
-                model_manager.inspect,
-                angle,
-                image_path.read_bytes(),
-                requested_model=model_name,
-            )
-        except ModelSelectionError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except InferenceRuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-    session_id, overall = await _record(results)
-    return {
-        "session_id": session_id,
-        "overall_status": overall,
-        "angles": results,
-        "required_angles": required_angles,
-        "available_angles": required_angles,
-        "configured_angles": configured_angles,
-        "unavailable_angles": unavailable_angles,
-    }
-
-
 @app.get("/health")
 def health_check() -> dict[str, Any]:
     return model_manager.health()

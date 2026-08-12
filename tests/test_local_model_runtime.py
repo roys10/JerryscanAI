@@ -948,6 +948,7 @@ class RuntimeTests(unittest.TestCase):
                 manifest,
                 preprocessor_factory=lambda _: _FakePreprocessor(),
                 engine_factory=lambda _, **__: _MeasuredCpuEngine(device="cpu"),
+                cpu_inference_concurrency=1,
             )
             stream = io.BytesIO()
             Image.new("RGB", (32, 48), "white").save(stream, format="PNG")
