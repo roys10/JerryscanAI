@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, RefreshCw, History, LayoutDashboard, Search, Filter, Settings, Bell, Plus, Trash2, Edit2, Mail, Globe } from 'lucide-react';
+import { Upload, Brain, CheckCircle, XCircle, AlertCircle, Loader2, Camera, RefreshCw, History, LayoutDashboard, Search, Filter, Settings, Bell, Plus, Trash2, Edit2, Mail, Globe, Lock } from 'lucide-react';
 import './Inspection.css';
 import './History.css';
 import { ANGLES, ANGLE_IDS } from './constants';
@@ -832,34 +832,35 @@ function App() {
 
       {/* 2. Global SMTP Section */}
       <div style={{ marginBottom: '2rem' }}>
-        <div className="card" style={{ maxWidth: '600px', margin: '0 auto' }}>
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
+        <div className="card" style={{ maxWidth: '700px', margin: '0 auto' }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
             <Mail size={18} color="var(--primary-color)" /> SMTP Server (Email Provider)
           </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+          <div className="smtp-form-grid">
             <div className="form-group">
-              <label>Server</label>
-              <input type="text" value={systemSettings.smtp.server} onChange={(e) => setSystemSettings({ ...systemSettings, smtp: { ...systemSettings.smtp, server: e.target.value } })} className="modal-input" />
+              <label htmlFor="smtp-server">Server</label>
+              <input id="smtp-server" type="text" placeholder="smtp.gmail.com" value={systemSettings.smtp.server} onChange={(e) => setSystemSettings({ ...systemSettings, smtp: { ...systemSettings.smtp, server: e.target.value } })} className="modal-input" />
             </div>
             <div className="form-group">
-              <label>Port</label>
-              <input type="number" value={systemSettings.smtp.port} onChange={(e) => setSystemSettings({ ...systemSettings, smtp: { ...systemSettings.smtp, port: parseInt(e.target.value) || 587 } })} className="modal-input" />
+              <label htmlFor="smtp-port">Port</label>
+              <input id="smtp-port" type="number" min="1" max="65535" value={systemSettings.smtp.port} onChange={(e) => setSystemSettings({ ...systemSettings, smtp: { ...systemSettings.smtp, port: parseInt(e.target.value) || 587 } })} className="modal-input" />
             </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div className="form-group">
-              <label>User / Sender</label>
-              <input type="text" value={systemSettings.smtp.user} onChange={(e) => setSystemSettings({ ...systemSettings, smtp: { ...systemSettings.smtp, user: e.target.value } })} className="modal-input" />
+            <div className="form-group form-group-full">
+              <label htmlFor="smtp-user">User / Sender</label>
+              <input id="smtp-user" type="email" placeholder="alerts@example.com" value={systemSettings.smtp.user} onChange={(e) => setSystemSettings({ ...systemSettings, smtp: { ...systemSettings.smtp, user: e.target.value } })} className="modal-input" />
             </div>
-            <div className="form-group">
+            <div className="form-group form-group-full">
               <label>SMTP Credential</label>
-              <div className="modal-input" style={{ color: 'var(--text-muted)' }}>
-                {systemSettings.smtp.password_configured ? 'Configured securely by environment' : 'Not configured — set SMTP_PASSWORD on the server'}
+              <div className="modal-input smtp-readonly-field" title={systemSettings.smtp.password_configured ? 'Configured securely by environment' : 'Not configured — set SMTP_PASSWORD on the server'}>
+                <Lock size={14} />
+                <span>
+                  {systemSettings.smtp.password_configured ? 'Configured securely by environment' : 'Not configured — set SMTP_PASSWORD on the server'}
+                </span>
               </div>
             </div>
           </div>
-          <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
-            <button onClick={saveSettings} disabled={settingsLoading} className="btn-primary" style={{ width: 'auto', padding: '0.5rem 1.5rem', fontSize: '0.8rem' }}>
+          <div style={{ marginTop: '1.75rem', display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={saveSettings} disabled={settingsLoading} className="btn-primary" style={{ width: 'auto', padding: '0.75rem 1.5rem', fontSize: '0.85rem' }}>
               {settingsLoading ? <Loader2 className="spin" size={14} /> : 'Save SMTP Settings'}
             </button>
           </div>
