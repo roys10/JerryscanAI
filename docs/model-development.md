@@ -6,6 +6,45 @@ Keep PatchCore as the first baseline, but make the comparison protocol trustwort
 
 The first controlled benchmark should compare background-handling approaches with the same PatchCore configuration. Model families should only expand after raw scores, thresholds, and metrics are correct in Model Lab.
 
+## How the current PatchCore model works
+
+PatchCore is a normal-only, memory-based anomaly detector. Its fitting process
+does not learn scratch, dent, or hole classes and does not repeatedly update a
+classifier through supervised epochs. Instead, the current pipeline works as
+follows:
+
+1. A pretrained, frozen **Wide ResNet-50-2** processes every normal training
+   image. ResNet shortcut connections make a deep network easier to optimize;
+   “Wide” means that its internal layers carry more feature channels than the
+   corresponding standard ResNet-50 configuration.
+2. PatchCore reads intermediate `layer2` and `layer3` feature maps rather than
+   the backbone's final ImageNet classification. At the current 256 × 256
+   input size, their combined representation becomes an approximately 32 × 32
+   grid: 1,024 overlapping local regions, each represented by a 1,536-value
+   **embedding**.
+3. Embeddings from all normal training images form a very large candidate
+   pool. A **coreset** selector keeps a representative subset. The current
+   10% ratio means approximately 10% of patch embeddings, not 10% of training
+   images; every training image still contributes candidates. A
+   k-center-greedy style selection favors candidates that extend coverage of
+   normal feature space instead of retaining many near-duplicates.
+4. The selected embeddings become the angle-specific **memory bank** stored in
+   the checkpoint. G01-G04 require separate banks because normal geometry,
+   lighting, and visible surface regions differ by viewpoint.
+5. During inference, new patch embeddings search the matching memory bank for
+   the nearest normal embeddings. Large feature-space distances indicate
+   unfamiliar local appearance, producing the anomaly map and raw image score.
+   `num_neighbors=9` is used in PatchCore's image-score reweighting; it is
+   separate from the 10% coreset ratio.
+
+`CpuOffloadPatchcore` is a training-time resource strategy, not a different
+anomaly algorithm. The GPU extracts Wide ResNet features, while the huge
+pre-coreset embedding pool is accumulated in system RAM so the all-image,
+10%-coreset experiment fits the available VRAM. It can make fitting slower, but
+it does not lower resolution, remove images, shrink the requested coreset, or
+change the saved PatchCore model standard. Production inference loads the
+already-selected memory bank from the checkpoint.
+
 ## Frozen G01 split v2
 
 | Split | Capture sessions | Images | Purpose |

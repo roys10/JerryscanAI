@@ -13,6 +13,31 @@ PatchCore models are trained only after their preprocessing dataset is complete 
 
 The preprocessing model may use train and validation data for configuration. The locked anomaly-test images must not be used to choose prompts, thresholds, morphology, checkpoints, or supervised segmentation labels.
 
+## What the preprocessing components are
+
+The current `rembg_u2net_black_v1` name describes a pipeline, not one model:
+
+- **U²-Net** is the learned segmentation model. It is a convolutional
+  encoder-decoder originally designed for salient-object detection. Its outer
+  U-shaped network captures whole-object context, while nested Residual
+  U-blocks combine coarse context with fine boundary detail. It outputs a soft
+  per-pixel foreground confidence map; it does not detect defects.
+- **rembg** is the library that prepares the image and calls U²-Net. rembg is
+  not the learned model.
+- **`u2net.onnx`** is the pinned, portable file containing the frozen U²-Net
+  graph and pretrained weights. **ONNX Runtime** is the execution engine that
+  loads that file and performs inference.
+- **Project preprocessing code** converts the soft output into a binary mask,
+  keeps the largest foreground component, preserves holes such as the handle
+  opening, validates mask area, aligns the foreground, and composes it on a
+  black canvas.
+
+We did not train or fine-tune U²-Net on jerrycans. The offline dataset generator
+used the pinned model to create masks and derivative images before PatchCore
+training. The production backend uses the same model, weight hash, and mask
+rules on every original camera image before PatchCore inference. U²-Net is
+therefore upstream of PatchCore; it is not stored inside a PatchCore checkpoint.
+
 ## Current variants
 
 | ID | Status | Used in the current PatchCore comparison? | Purpose or decision reason |
