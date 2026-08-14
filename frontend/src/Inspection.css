@@ -375,10 +375,28 @@
     font-size: 0.85rem;
 }
 
-.model-configuration-note {
+.model-threshold-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.model-threshold-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.model-threshold-item:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.model-threshold-item small {
     color: var(--text-muted);
     font-size: 0.7rem;
-    line-height: 1.45;
 }
 
 .result-summary {
@@ -482,10 +500,13 @@
 }
 
 .modal-input {
+    box-sizing: border-box;
     width: 100%;
+    min-width: 0;
     padding: 0.75rem;
     border: 1px solid var(--border-color);
     border-radius: 0.375rem;
+    font-family: inherit;
     font-size: 0.875rem;
     outline: none;
     transition: all 0.2s;
@@ -494,6 +515,41 @@
 .modal-input:focus {
     border-color: var(--primary-color);
     box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
+}
+
+/* --- SMTP settings form (Alerts page) --- */
+.smtp-form-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 1.25rem 1.5rem;
+}
+
+.smtp-form-grid .form-group-full {
+    grid-column: 1 / -1;
+}
+
+.smtp-readonly-field {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    background: #f8fafc;
+    border-style: dashed;
+    color: var(--text-muted);
+    cursor: not-allowed;
+}
+
+.smtp-readonly-field span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+    .smtp-form-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 .nav-icon-btn {
