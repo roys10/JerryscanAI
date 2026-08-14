@@ -375,10 +375,28 @@
     font-size: 0.85rem;
 }
 
-.model-configuration-note {
+.model-threshold-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.model-threshold-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.model-threshold-item:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.model-threshold-item small {
     color: var(--text-muted);
     font-size: 0.7rem;
-    line-height: 1.45;
 }
 
 .result-summary {

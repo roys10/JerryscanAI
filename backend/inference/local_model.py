@@ -780,7 +780,6 @@ def _encode_image(image: Image.Image, *, format: str = "JPEG") -> str:
 
 
 _MAIN_COMPATIBILITY_THRESHOLD = 0.5
-QUALITY_FAILURE_BOUNDARY_PERCENTAGE = 70.0
 
 
 def _normalize_anomaly_map(
@@ -902,14 +901,14 @@ def _display_artifacts(
     )
 
 
-def _quality_score_percentage(raw_score: float, raw_threshold: float) -> float:
-    """Map the raw anomaly scale to the operator's monotonic quality index."""
-    quality = 100 - (
-        (100 - QUALITY_FAILURE_BOUNDARY_PERCENTAGE)
-        * raw_score
-        / raw_threshold
-    )
-    return float(np.clip(quality, 0, 100))
+def _quality_score_percentage(raw_score: float) -> float:
+    """Translate a raw anomaly score directly to the displayed quality scale."""
+    return float(np.clip(100 - raw_score, 0, 100))
+
+
+def _quality_failure_boundary_percentage(raw_threshold: float) -> float:
+    """Translate one angle's raw decision threshold to the same quality scale."""
+    return float(np.clip(100 - raw_threshold, 0, 100))
 
 
 class LocalPatchCoreRuntime:
@@ -1130,7 +1129,10 @@ class LocalPatchCoreRuntime:
         display_bounds = getattr(engine, "pixel_display_bounds", None)
         threshold = angle_artifact.decision_threshold
         decision = "FAIL" if raw_score >= threshold else "PASS"
-        quality_score_percentage = _quality_score_percentage(raw_score, threshold)
+        quality_score_percentage = _quality_score_percentage(raw_score)
+        quality_failure_boundary_percentage = (
+            _quality_failure_boundary_percentage(threshold)
+        )
         heatmap_image, defect_overlay_image, display_contract = _display_artifacts(
             anomaly_map,
             model_input,
@@ -1148,11 +1150,11 @@ class LocalPatchCoreRuntime:
             "score": raw_score,
             "quality_score_percentage": quality_score_percentage,
             "image_threshold": threshold,
-            "quality_failure_boundary_percentage": QUALITY_FAILURE_BOUNDARY_PERCENTAGE,
+            "quality_failure_boundary_percentage": quality_failure_boundary_percentage,
             "threshold_score": "raw_patchcore_image_score",
             "threshold_rule": "fail_if_score_greater_than_or_equal",
             "decision_contract": "configured_raw_patchcore_image_score",
-            "quality_score_contract": "relative_quality_zero_raw_is_100_threshold_is_70",
+            "quality_score_contract": "direct_quality_100_minus_raw_score_clipped",
             "anomaly_map_shape": list(anomaly_map.shape),
             "quality_flags": quality_flags,
             "preprocessing": metrics,
@@ -1183,7 +1185,11 @@ class LocalPatchCoreRuntime:
             "score": None,
             "quality_score_percentage": None,
             "image_threshold": self.manifest.angles[selected_angle].decision_threshold,
-            "quality_failure_boundary_percentage": QUALITY_FAILURE_BOUNDARY_PERCENTAGE,
+            "quality_failure_boundary_percentage": (
+                _quality_failure_boundary_percentage(
+                    self.manifest.angles[selected_angle].decision_threshold
+                )
+            ),
             "threshold_score": "raw_patchcore_image_score",
             "threshold_rule": "fail_if_score_greater_than_or_equal",
             "quality_flags": error.quality_flags,

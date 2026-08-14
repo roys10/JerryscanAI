@@ -296,6 +296,11 @@ class ManifestTests(unittest.TestCase):
             g02_result = runtime.predict(image_bytes, "G02")
             self.assertEqual(g02_result["status"], "FAIL")
             self.assertEqual(g02_result["image_threshold"], 9.5)
+            self.assertAlmostEqual(
+                g02_result["quality_score_percentage"],
+                90.0,
+            )
+            self.assertEqual(g02_result["quality_failure_boundary_percentage"], 90.5)
             self.assertEqual(g02_result["angle"], "G02")
 
     def test_schema_1_1_keeps_one_two_three_or_four_valid_artifacts(self):
@@ -452,6 +457,26 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(health["available_angles"], ["G01"])
             self.assertEqual(health["required_angles"], ["G01"])
             self.assertIn("G02", health["unavailable_angles"])
+            self.assertEqual(health["decision_thresholds"]["G01"]["value"], 61.0)
+            self.assertTrue(health["decision_thresholds"]["G01"]["available"])
+            self.assertEqual(health["decision_thresholds"]["G02"]["value"], 62.0)
+            self.assertFalse(health["decision_thresholds"]["G02"]["available"])
+            self.assertEqual(
+                health["decision_thresholds"]["G01"][
+                    "quality_failure_boundary_percentage"
+                ],
+                39.0,
+            )
+            self.assertEqual(
+                health["decision_thresholds"]["G02"][
+                    "quality_failure_boundary_percentage"
+                ],
+                38.0,
+            )
+            self.assertEqual(
+                health["quality_score"]["mapping"],
+                "clip(100 - raw_patchcore_image_score, 0, 100)",
+            )
 
     def test_manager_health_reports_all_failed_angles(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -686,12 +711,12 @@ class RuntimeTests(unittest.TestCase):
             )
             self.assertAlmostEqual(
                 result["quality_score_percentage"],
-                100 - 30 * 7.25 / 7.0,
+                92.75,
             )
-            self.assertEqual(result["quality_failure_boundary_percentage"], 70.0)
+            self.assertEqual(result["quality_failure_boundary_percentage"], 93.0)
             self.assertEqual(
                 result["quality_score_contract"],
-                "relative_quality_zero_raw_is_100_threshold_is_70",
+                "direct_quality_100_minus_raw_score_clipped",
             )
             self.assertTrue(result["heatmap_image"].startswith("data:image/jpeg;base64,"))
             self.assertTrue(
@@ -715,7 +740,8 @@ class RuntimeTests(unittest.TestCase):
             Image.new("RGB", (32, 48), "white").save(stream, format="PNG")
             result = runtime.predict(stream.getvalue(), "G01")
             self.assertEqual(result["status"], "FAIL")
-            self.assertEqual(result["quality_score_percentage"], 70.0)
+            self.assertEqual(result["quality_score_percentage"], 40.0)
+            self.assertEqual(result["quality_failure_boundary_percentage"], 40.0)
 
     def test_score_below_threshold_is_pass(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -747,8 +773,8 @@ class RuntimeTests(unittest.TestCase):
 
             result = runtime.predict(stream.getvalue(), "G01")
 
-            self.assertAlmostEqual(result["quality_score_percentage"], 72.5)
-            self.assertEqual(result["quality_failure_boundary_percentage"], 70.0)
+            self.assertAlmostEqual(result["quality_score_percentage"], 45.0)
+            self.assertEqual(result["quality_failure_boundary_percentage"], 40.0)
             self.assertEqual(result["status"], "PASS")
             self.assertEqual(result["raw_image_score"], 55.0)
             self.assertEqual(result["image_threshold"], 60.0)

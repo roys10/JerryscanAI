@@ -153,6 +153,26 @@ The production decision metric should be defect recall at an agreed maximum fals
 
 Threshold selection belongs to validation. If validation is normal-only, choose a provisional normal-score quantile tied to the allowed false-reject rate and label it provisional. Do not use the maximum normal score as an unexamined production threshold.
 
+### Per-angle runtime thresholds and the displayed percentage
+
+The multi-angle `model.json` is the runtime source of truth. Every entry under
+`angles.<angle>.decision_threshold.value` is an independent raw PatchCore
+image-score threshold. The backend selects the threshold for the same camera
+angle as the uploaded image, fails when `raw_score >= raw_threshold`, and uses
+that same threshold when calculating the operator-facing quality percentage.
+It never substitutes one angle's raw threshold for another.
+
+The UI directly translates the raw scale rather than forcing every model's
+boundary to one shared percentage. For an angle with raw threshold `T` and
+score `S`, it uses `quality = clip(100 - S, 0, 100)` and
+`quality_threshold = clip(100 - T, 0, 100)`. A raw threshold of 34 therefore
+displays as 66%, while a raw threshold of 20 displays as 80%. `/health` exposes
+the validated per-angle raw contracts and their translated boundaries under
+`decision_thresholds`, including an availability flag. A configured angle
+whose contract or artifact cannot be validated is shown as unavailable instead
+of receiving a guessed threshold. The percentage remains a relative operator
+index, not a calibrated probability.
+
 ## Current training and Model Lab status
 
 The original training and comparison-path problems have been addressed for the

@@ -228,13 +228,16 @@ class JerryScanModelManager:
                     "value": artifact.decision_threshold,
                     "rule": "fail_if_score_greater_than_or_equal",
                     "provenance": artifact.threshold_provenance,
+                    "available": angle in runtime.available_angles,
+                    "quality_failure_boundary_percentage": max(
+                        0.0, min(100.0, 100.0 - artifact.decision_threshold)
+                    ),
                 }
                 for angle, artifact in runtime.manifest.angles.items()
-                if angle in runtime.available_angles
             },
             "quality_score": {
-                "failure_boundary_percentage": 70.0,
                 "rule": "fail_if_quality_less_than_or_equal",
+                "mapping": "clip(100 - raw_patchcore_image_score, 0, 100)",
                 "meaning": "relative_operator_index_not_probability",
             },
         }

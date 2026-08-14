@@ -125,11 +125,14 @@ to validate defect recall. Invalid images or failed input preprocessing return
 `WRONG_INPUT`; model/runtime failures are HTTP errors and are not recorded as
 defective cans.
 
-The operator UI converts the raw anomaly score to a relative quality index:
-100% means no measured anomaly and 70% is the configured failure boundary.
-Values at or below 70% are `FAIL`. This index is a monotonic presentation of
-the same raw-score rule, not confidence, probability, accuracy, or a second
-decision threshold.
+The operator UI directly translates the raw anomaly score to a quality index:
+`quality = clip(100 - raw_score, 0, 100)`. Each angle's displayed failure
+boundary uses the same translation: `quality_threshold = clip(100 -
+raw_threshold, 0, 100)`. For example, raw thresholds 34 and 20 display as 66%
+and 80%, respectively. PASS/FAIL still uses the authoritative raw threshold
+from `model.json`; the percentage is a presentation of the same score, not
+confidence, probability, or accuracy. The Model Configuration panel lists the
+translated percentage and underlying raw threshold for every loaded angle.
 
 For Docker, create `backend/.env` from `backend/.env.example` and run
 `docker compose up --build`. Compose loads it as the container environment,

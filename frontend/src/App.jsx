@@ -6,8 +6,6 @@ import './History.css';
 import { ANGLES, ANGLE_IDS } from './constants';
 
 const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
-const QUALITY_FAILURE_BOUNDARY = 70;
-
 function apiErrorDetail(err, fallback) {
   const detail = err.response?.data?.detail;
   if (typeof detail === 'string') return detail;
@@ -21,21 +19,46 @@ function ResultImage({ src, ...props }) {
 
 function displayModelName(displayName, modelId) {
   if (displayName) return displayName;
-  return modelId ? modelId.replace(/_/g, ' ') : 'Model not ready';
+  return modelId ? modelId.replace(/_/g, ' ') : 'Model is not loaded';
+}
+
+function unavailableThresholdMessage(angle, modelConfiguration) {
+  const unavailable = modelConfiguration?.unavailable_angles?.[angle];
+  const detail = unavailable?.detail?.toLowerCase() || '';
+  if (unavailable?.stage === 'contract_validation' && detail.includes('decision_threshold')) {
+    return 'Threshold is not set';
+  }
+  return 'Model is not loaded';
+}
+
+function qualityFailureBoundary(result) {
+  if (Number.isFinite(result?.image_threshold)) {
+    return Math.min(100, Math.max(0, 100 - result.image_threshold));
+  }
+  if (Number.isFinite(result?.quality_failure_boundary_percentage)) {
+    return result.quality_failure_boundary_percentage;
+  }
+  return null;
+}
+
+function thresholdQualityBoundary(contract) {
+  if (Number.isFinite(contract?.quality_failure_boundary_percentage)) {
+    return contract.quality_failure_boundary_percentage;
+  }
+  if (Number.isFinite(contract?.value)) {
+    return Math.min(100, Math.max(0, 100 - contract.value));
+  }
+  return null;
 }
 
 function qualityScore(result) {
-  if (Number.isFinite(result?.quality_score_percentage)) {
-    return result.quality_score_percentage;
+  if (Number.isFinite(result?.raw_image_score)) {
+    const quality = 100 - result.raw_image_score;
+    return Math.min(100, Math.max(0, quality));
   }
-  if (!Number.isFinite(result?.raw_image_score)
-    || !Number.isFinite(result?.image_threshold)
-    || result.image_threshold <= 0) {
-    return null;
-  }
-  const quality = 100 - ((100 - QUALITY_FAILURE_BOUNDARY)
-    * result.raw_image_score / result.image_threshold);
-  return Math.min(100, Math.max(0, quality));
+  return Number.isFinite(result?.quality_score_percentage)
+    ? result.quality_score_percentage
+    : null;
 }
 
 function resultViews(result) {
@@ -117,6 +140,19 @@ function App() {
   // Get current angle's data or empty object
   const currentData = angleData[activeAngle] || {};
   const { previewUrl, result } = currentData;
+  const displayedQualityBoundary = qualityFailureBoundary(result);
+  const configuredThresholdAngles = Array.isArray(modelConfiguration?.configured_angles)
+    ? modelConfiguration.configured_angles
+    : Object.keys(modelConfiguration?.decision_thresholds || {});
+  const displayedThresholds = isArchiveView && Number.isFinite(result?.image_threshold)
+    ? [[result.angle || activeAngle, { value: result.image_threshold }]]
+    : configuredThresholdAngles.map(angle => [
+      angle,
+      modelConfiguration?.decision_thresholds?.[angle] || null,
+    ]);
+  const showThresholdConfiguration = isArchiveView
+    ? Number.isFinite(result?.image_threshold)
+    : Boolean(modelConfiguration?.ready_for_inference && modelConfiguration?.model_id);
   const availableResultViews = resultViews(result);
   const selectedResultView = availableResultViews.find(view => view.id === viewMode)
     || availableResultViews[0];
@@ -414,10 +450,25 @@ function App() {
                     modelConfiguration?.model_id
                   )}</strong>
               </div>
-              <div className="model-configuration-row">
-                <span>Threshold</span>
-                <strong>{QUALITY_FAILURE_BOUNDARY}%</strong>
-              </div>
+              {showThresholdConfiguration && (
+                <div className="model-configuration-row">
+                  <span>Thresholds by camera</span>
+                  <div className="model-threshold-list">
+                    {displayedThresholds.map(([angle, contract]) => (
+                      <div className="model-threshold-item" key={angle}>
+                        {Number.isFinite(contract?.value) && contract.available !== false ? (
+                          <>
+                            <strong>{angle}: {thresholdQualityBoundary(contract).toFixed(1)}% quality</strong>
+                            <small>Raw PatchCore threshold: {Number(contract.value).toFixed(4)}</small>
+                          </>
+                        ) : (
+                          <strong>{angle}: {unavailableThresholdMessage(angle, modelConfiguration)}</strong>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {!isArchiveView && modelConfiguration?.coverage === 'partial' && (
                 <div className="model-availability-warning" role="status">
                   Partial coverage: {availableAngleIds.length} of {modelConfiguration.configured_angles?.length || angles.length} camera models available.
@@ -586,7 +637,7 @@ function App() {
                 </strong>
               </div>
               <div className="result-summary-explanation">
-                100% means no measured anomaly. Failure threshold: {QUALITY_FAILURE_BOUNDARY}%.
+                100% means no measured anomaly. Failure threshold: {displayedQualityBoundary}%.
                 This relative quality index is not confidence, probability, or accuracy.
                 <span>Raw model score: {result.raw_image_score.toFixed(4)}</span>
               </div>
