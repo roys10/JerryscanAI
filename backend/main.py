@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.concurrency import run_in_threadpool
+from starlette.staticfiles import StaticFiles
 
 from backend.inference.alerts import AlertManager
 from backend.inference.config import ConfigManager
@@ -288,6 +289,14 @@ def readiness_check() -> JSONResponse:
         status_code=200 if health["ready_for_inference"] else 503,
         content=health,
     )
+
+
+# Register the frontend last so every API route, including FastAPI's /docs and
+# /openapi.json, keeps priority. Local backend development remains API-only
+# until `npm run build` creates frontend/dist.
+frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
 
 if __name__ == "__main__":

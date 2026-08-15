@@ -33,6 +33,12 @@ the tracked training metadata at runtime and checks that its
 model set, angle, image size, and preprocessing ID match `model.json`. This
 catches a checkpoint/metadata pair copied into the wrong folder.
 
+The production Docker image includes the Git-tracked portions of `models/`.
+Compose mounts only the selected bundle's four `.ckpt` files and
+`u2net.onnx` from the host at their expected paths. Do not mount the entire
+host `models/` directory over `/app/models`: a directory bind mount would hide
+the current contracts and metadata baked into the image.
+
 ## Current choices
 
 - `Patchcore_raw_letterbox_v1_256_c10_seed42`
