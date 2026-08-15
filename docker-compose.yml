@@ -5,7 +5,11 @@ services:
     ports:
       - "0.0.0.0:80:8000"
     volumes:
-      - ./models:/app/models:ro
+      - ./models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G01.ckpt:/app/models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G01.ckpt:ro
+      - ./models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G02.ckpt:/app/models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G02.ckpt:ro
+      - ./models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G03.ckpt:/app/models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G03.ckpt:ro
+      - ./models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G04.ckpt:/app/models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/G04.ckpt:ro
+      - ./models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/u2net.onnx:/app/models/Patchcore_rembg_u2net_black_v1_256_c10_seed42/u2net.onnx:ro
       - ./runtime-data:/app/runtime-data
       - ./backend/.env:/app/backend/.env:ro
     env_file:
