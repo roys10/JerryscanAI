@@ -20,11 +20,11 @@ views. Models with segmentation-based preprocessing also provide a
 **Preprocessing Mask** view showing the mask used to isolate and align the
 jerrycan. The PASS/FAIL badge is deliberately simple. Result details show a
 **Quality score** from 0% to 100%, where 100% means no measured anomaly and the
-failure threshold is 70%. The score is calculated as
-`clamp(100 - 30 * raw_score / raw_threshold, 0, 100)`, so the backend's raw
-decision threshold maps exactly to 70%. This is a relative quality index, not
-confidence, probability, or accuracy. Model Configuration shows the model name
-and the operator threshold as `70%`.
+displayed score is calculated as `clamp(100 - raw_score, 0, 100)`. The displayed
+failure boundary uses the same translation: `clamp(100 - raw_threshold, 0,
+100)`. This is a relative quality index, not confidence, probability, or
+accuracy. Model Configuration shows each camera's translated percentage and
+its underlying raw threshold.
 
 ## Start locally
 
@@ -42,11 +42,12 @@ Open the Vite URL printed in the terminal (normally
 default. To use another backend address, set `VITE_BACKEND_URL` before starting
 or building the frontend.
 
-For the remote VM deployment on HTTP port 80, use the VM address without an
-explicit port, for example `VITE_BACKEND_URL=http://192.0.2.10`. Vite embeds
-this value when the frontend is built. A frontend served over HTTPS cannot call
-an HTTP backend because browsers block mixed content; that setup requires TLS
-on the backend or an HTTPS reverse proxy.
+The production Docker build compiles this frontend and the existing FastAPI
+application serves it from `/` on the same origin. No production
+`VITE_BACKEND_URL`, second frontend service, or reverse proxy is required. Open
+`http://<VM-IP>/`; API calls such as `/health` go back to that same VM. A future
+HTTPS deployment must also expose the API through HTTPS because browsers block
+mixed content.
 
 ## Checks
 

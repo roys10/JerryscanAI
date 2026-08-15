@@ -15,6 +15,18 @@
       ],
       "webhook_url": "",
       "enabled": true
+    },
+    {
+      "name": "test",
+      "type": "consecutive_fails",
+      "threshold": 1,
+      "window": 50,
+      "emails": [
+        "roysegev10@gmail.com"
+      ],
+      "webhook_url": "",
+      "enabled": true,
+      "id": "1786798237096"
     }
   ]
 }

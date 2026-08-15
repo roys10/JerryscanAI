@@ -5,7 +5,8 @@ import './Inspection.css';
 import './History.css';
 import { ANGLES, ANGLE_IDS } from './constants';
 
-const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL
+  || (import.meta.env.PROD ? '' : 'http://localhost:8000');
 function apiErrorDetail(err, fallback) {
   const detail = err.response?.data?.detail;
   if (typeof detail === 'string') return detail;
