@@ -22,8 +22,12 @@ test_dataset
 cli_predictions
 model_lab
 
+# Model contracts and metadata are copied into the image. Large learned
+# artifacts remain external and are mounted from the host at runtime.
+models/**/*.ckpt
+models/**/*.onnx
+
 # Persistent storage (Mounted by volumes)
-models
 results
 backend/inspections_history.json
 

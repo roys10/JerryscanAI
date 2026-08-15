@@ -136,9 +136,11 @@ translated percentage and underlying raw threshold for every loaded angle.
 
 For Docker, create `backend/.env` from `backend/.env.example` and run
 `docker compose up --build`. Compose loads it as the container environment,
-mounts the same file read-only for the backend, mounts
-`models/` read-only, and keeps
-runtime files under `runtime-data/`. Inspection history is stored in the active
+mounts the same file read-only for the backend, and keeps runtime files under
+`runtime-data/`. Git-tracked model contracts, metadata, and README files are
+copied into the image. Compose mounts only `G01.ckpt` through `G04.ckpt` and
+`u2net.onnx` from the host into that image-backed model folder, so the host
+cannot hide or leave behind an outdated `model.json`. Inspection history is stored in the active
 `runtime-data/inspections_history.db` SQLite database. This project keeps that
 same database file in Git as requested; `settings.json` and SQLite's temporary
 WAL/SHM files remain ignored.
@@ -159,9 +161,10 @@ builds `ghcr.io/roys10/jerryscanai:latest`, copies Compose to the configured
 remote server, creates `backend/.env` from the `SMTP_USER` and `SMTP_PASSWORD`
 GitHub secrets, sets `JERRYSCAN_MODEL_FOLDER` to the deployed U2Net-black
 model-set path, and restarts the backend. It does not run the local test suite.
-Because checkpoints and ONNX weights are ignored by Git, the selected model
-folder and its large artifacts must already exist in the remote server's
-`~/jerryscanai/models` directory.
+Because checkpoints and ONNX weights are ignored by Git, only those five large
+artifacts must already exist under the selected folder in the remote server's
+`~/jerryscanai/models` directory. The matching `model.json` and metadata come
+from the newly built image.
 
 ## Model Lab
 
