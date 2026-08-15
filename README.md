@@ -146,9 +146,12 @@ same database file in Git as requested; `settings.json` and SQLite's temporary
 WAL/SHM files remain ignored.
 
 The container keeps Uvicorn on `0.0.0.0:8000` internally and Compose publishes
-it on VM port 80 on all network interfaces. With the VM firewall allowing port
-80, the API is therefore available at `http://<VM-IP>/health`; port 8000 does
-not need to be opened externally.
+it on VM port 80 on all network interfaces. The Docker build compiles the React
+operator frontend and FastAPI serves those static files from `/`; production
+browser requests use the same origin for the API. With the VM firewall allowing
+port 80, open `http://<VM-IP>/` for the interface and
+`http://<VM-IP>/health` for backend health. Port 8000 does not need to be opened
+externally, and no nginx or second frontend service is used.
 
 For a normal local run, non-secret alert settings live in
 `backend/config.json`. You may edit the SMTP server/user, recipients, webhook,
