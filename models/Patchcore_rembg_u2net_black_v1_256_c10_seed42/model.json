@@ -55,7 +55,7 @@
       "metadata": "G03.metadata.json",
       "decision_threshold": {
         "score": "raw_patchcore_image_score",
-        "value": 34,
+        "value": 20,
         "rule": "fail_if_score_greater_than_or_equal",
         "provenance": "temporary_uncalibrated_operator_default_requires_G03_validation"
       }
@@ -69,7 +69,7 @@
       "metadata": "G04.metadata.json",
       "decision_threshold": {
         "score": "raw_patchcore_image_score",
-        "value": 34,
+        "value": 20,
         "rule": "fail_if_score_greater_than_or_equal",
         "provenance": "temporary_uncalibrated_operator_default_requires_G04_validation"
       }
